@@ -4,8 +4,10 @@
 
 Built for the **Gnome Tavern Hackathon** (`onyx-1` testnet / Gno `v1.8.0`). BountyForge combines a pure formal-math Gno package (`p/escrowmath`), a security-hardened DAO-composable escrow realm (`r/bountyforge`), an interactive `gnoweb` UI with on-chain SVG credentials, a zero-build **Adena Wallet** web dApp (`web/`), and an 8-tool zero-dependency **Model Context Protocol (MCP)** server (`mcp/`).
 
+- **HD Demo Video (Release `v2.0.0`)**: [Watch / Download `bountyforge-v2-demo.mp4`](https://github.com/LHorTL/bountyforge/releases/download/v2.0.0/bountyforge-v2-demo.mp4) (`1280x720` H.264 walkthrough: live Adena Web dApp & Split Studio, live `gnodev`/`gnoweb` v1.8.0 SVG & `<gno-form>` rendering, 60/60 test matrix & `onyx-1` receipts)
 - **Live Adena Wallet Web dApp & Split Studio**: [https://lhortl.github.io/bountyforge/](https://lhortl.github.io/bountyforge/)
 - **Onyx Testnet (`onyx-1`) `gnoweb` Realm**: [https://onyx.testnets.gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge](https://onyx.testnets.gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge)
+- **Onyx GPAS Approval Tracker**: [`p/.../escrowmath`](https://gpas.onyx.testnets.gno.land/?path=gno.land/p/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/escrowmath) · [`r/.../bountyforge`](https://gpas.onyx.testnets.gno.land/?path=gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge)
 
 ---
 
@@ -140,13 +142,26 @@ Hardened **v2.0** deployed via same-submitter replacement with `gnokey v1.8.0` t
 
 *(Initial v1.0 submissions were at blocks `#1341832` / `#1341833`, superseded on-chain by the verified v2.0 replacements above.)*
 
-Verify live on-chain registration:
+Verify live on-chain registration & GPAS approval metadata:
 ```bash
 gnokey query vm/qinertpaths -data "gno.land/p/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac" -remote https://rpc.onyx.testnets.gno.land:443
 gnokey query vm/qinertpaths -data "gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac" -remote https://rpc.onyx.testnets.gno.land:443
+gnokey query vm/qpkgmeta_json -data "gno.land/p/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/escrowmath" -remote https://rpc.onyx.testnets.gno.land:443
+gnokey query vm/qpkgmeta_json -data "gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge" -remote https://rpc.onyx.testnets.gno.land:443
 ```
 
-Once enabled by a Gno.land `pkg_approvers` member, browse directly on `gnoweb`:
+### Onyx `inert` Policy, GPAS Status & Public Testnet Availability
+
+- **`onyx-1` GPAS Enablement (`code_submission_policy = "inert"`)**: `onyx-1` mirrors mainnet's `inert` deployment policy (7 funded `vm:p:pkg_approvers` accounts managed by the **GPAS** oracle at [gpas.onyx.testnets.gno.land](https://gpas.onyx.testnets.gno.land/)). Both BountyForge v2.0 paths pass syntax/type checks (zero compile errors) and show **`in review queue`** on GPAS alongside other Gnome Tavern hackathon realms. Per official Gno.land docs (`docs/builders/quickstart.md`), there is no GitHub PR approval workflow — packages enable automatically via GPAS (`automatic` mode) or via operator follow-up in [Gno.land Discord](https://discord.com/invite/gnoland).
+- **Public Testnet Audit (`docs.gno.land/resources/gnoland-networks/`)**: `onyx-1` (`https://rpc.onyx.testnets.gno.land:443`, alias `rpc.latest.testnets.gno.land`) is currently the **only live official public Gno.land testnet** (`staging` has been down since `2026-07-10` returning HTTP 503; `pearl-1` / Test16, `gnoland1` Betanet, `portal-loop`, and `test5`/`test11`/`test12` are retired; mainnet `gnoland-1` has no faucet and uses manual GPAS review at `gpas.gno.land`).
+- **Instant Live `gnoweb` Evaluation (`gnodev local`)**: Judges can inspect every rendered `<gno-button>`, `<gno-form>`, on-chain SVG payout chart, and SVG Builder Credential locally in seconds with Gno `v1.8.0`:
+  ```bash
+  gnodev local -deploy-key g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac \
+    -add-account g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac=100000000000ugnot
+  # Open http://127.0.0.1:8888/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge
+  ```
+
+Once GPAS enables the realm on `onyx-1`, browse directly on public `gnoweb`:
 - Board: `https://onyx.testnets.gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge`
 - Create Form: `...:new`
 - Bounty Detail: `...:bounty/1`
