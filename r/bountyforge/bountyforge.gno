@@ -1,6 +1,8 @@
 // Package bountyforge implements a trustless on-chain micro-bounty escrow,
-// multi-contributor basis-point payout splitter, optional arbiter dispute
-// resolution, and verifiable builder reputation board on Gno.land.
+// overflow-proof multi-contributor basis-point payout splitter, sponsor-safe
+// crowdfunding with pro-rata refunds, arbiter dispute resolution with timeout
+// escape hatch, DAO-composable canonical-banker entrypoints, and verifiable
+// builder reputation on Gno.land.
 package bountyforge
 
 import (
@@ -8,11 +10,15 @@ import (
 	"chain/banker"
 	"chain/runtime"
 	"chain/runtime/unsafe"
+	"math"
+	"math/overflow"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"gno.land/p/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/escrowmath"
 	"gno.land/p/nt/avl/v0"
+	"gno.land/p/nt/markdown/sanitize/v0"
 	"gno.land/p/nt/mux/v0"
 	"gno.land/p/nt/seqid/v0"
 	"gno.land/p/nt/ufmt/v0"
@@ -24,14 +30,28 @@ const (
 	StatusCancelled = "CANCELLED"
 	StatusDisputed  = "DISPUTED"
 
-	MinRewardUgnot int64 = 1000 // 0.001 GNOT minimum to prevent dust spam
-	MaxTitleLen          = 120
-	MaxSummaryLen        = 600
-	MaxTagsLen           = 120
-	MaxProofURLLen       = 300
-	MaxNotesLen          = 400
-	MaxSubmissions       = 50
+	MinRewardUgnot       int64 = 1000  // 0.001 GNOT minimum to prevent dust spam
+	ReviewGraceBlocks    int64 = 500   // review/dispute window after DeadlineH before creator can cancel
+	DisputeTimeoutBlocks int64 = 20000 // timeout escape hatch if designated arbiter disappears
+	MinDisputeWinBps     int64 = 2500  // minimum 25% dispute award to earn full completion credit & XP
+
+	MaxTitleRunes    = 120
+	MaxSummaryRunes  = 1000
+	MaxTagsRunes     = 120
+	MaxProofURLRunes = 300
+	MaxNotesRunes    = 400
+	MaxSubmissions   = 50
+	MaxSponsors      = 50
+	MaxPageSize      = 25
+	DefaultPageSize  = 15
 )
+
+// Contribution records an individual sponsor's (or creator's) escrowed ugnot deposit.
+// Index 0 is always the bounty creator; additional indices are crowdfund sponsors.
+type Contribution struct {
+	Sponsor address
+	Amount  int64
+}
 
 // Submission represents a contributor's proof-of-work entry for a bounty.
 type Submission struct {
@@ -40,6 +60,8 @@ type Submission struct {
 	ProofURL   string
 	Notes      string
 	SubmittedH int64
+	ViaSession bool
+	Withdrawn  bool
 }
 
 // PayoutRecord tracks a single on-chain disbursement made from a bounty.
@@ -49,21 +71,31 @@ type PayoutRecord struct {
 	Bps       int64
 }
 
-// Bounty holds all escrow, submission, dispute, and settlement state.
+// RefundRecord tracks a sponsor/creator refund returned on cancel or dispute settlement.
+type RefundRecord struct {
+	Sponsor address
+	Amount  int64
+}
+
+// Bounty holds all escrow, sponsor, submission, dispute, and settlement state.
 type Bounty struct {
-	ID            uint64
-	Title         string
-	Summary       string
-	Tags          string
-	Creator       address
-	Arbiter       address // optional; empty string if no arbiter configured
-	RewardUgnot   int64
-	Status        string
-	CreatedHeight int64
-	DeadlineH     int64 // 0 means no deadline expiry
-	DisputeReason string
-	Submissions   []*Submission
-	Payouts       []*PayoutRecord
+	ID             uint64
+	Title          string
+	Summary        string
+	Tags           string
+	Creator        address
+	Arbiter        address // optional; empty if no arbiter configured
+	RewardUgnot    int64
+	Status         string
+	CreatedHeight  int64
+	DeadlineH      int64 // 0 means no submission deadline
+	DisputeReason  string
+	DisputeOpenedH int64
+	DisputeBy      address
+	Contributions  []*Contribution
+	Submissions    []*Submission
+	Payouts        []*PayoutRecord
+	Refunds        []*RefundRecord
 }
 
 // BuilderProfile stores cumulative on-chain reputation and earnings.
@@ -73,12 +105,27 @@ type BuilderProfile struct {
 	TotalEarned int64
 	XP          int64
 	LastHeight  int64
+	creators    *avl.Tree // distinct bounty creators who paid this builder
+}
+
+// UniqueCreators returns the count of distinct creators who settled payouts to this builder.
+func (p *BuilderProfile) UniqueCreators() int {
+	if p == nil || p.creators == nil {
+		return 0
+	}
+	return p.creators.Size()
 }
 
 var (
-	nextID        seqid.ID
-	bounties      *avl.Tree // key: seqid.ID.String() -> *Bounty
-	builders      *avl.Tree // key: address.String() -> *BuilderProfile
+	nextID            seqid.ID
+	bounties          *avl.Tree // key: seqid.ID.String() -> *Bounty
+	openBounties      *avl.Tree // status index: OPEN
+	paidBounties      *avl.Tree // status index: PAID
+	disputedBounties  *avl.Tree // status index: DISPUTED
+	cancelledBounties *avl.Tree // status index: CANCELLED
+	builders          *avl.Tree // key: address.String() -> *BuilderProfile
+	leaderboard       *avl.Tree // key: leaderboardKey(XP, TotalEarned, Addr) -> *BuilderProfile
+
 	totalEscrowed int64
 	totalPaidOut  int64
 	openCount     int
@@ -95,7 +142,13 @@ func init() {
 func resetState() {
 	nextID = 0
 	bounties = avl.NewTree()
+	openBounties = avl.NewTree()
+	paidBounties = avl.NewTree()
+	disputedBounties = avl.NewTree()
+	cancelledBounties = avl.NewTree()
 	builders = avl.NewTree()
+	leaderboard = avl.NewTree()
+
 	totalEscrowed = 0
 	totalPaidOut = 0
 	openCount = 0
@@ -105,39 +158,116 @@ func resetState() {
 	initRouter()
 }
 
-func initRouter() {
-	router = mux.NewRouter()
-	router.HandleFunc("", renderHome)
-	router.HandleFunc("bounty/{id}", renderBountyDetail)
-	router.HandleFunc("builder/{addr}", renderBuilderProfile)
-	router.HandleFunc("leaderboard", renderLeaderboard)
-	router.HandleFunc("stats", renderStats)
-	router.SetNotFoundHandler(func(res *mux.ResponseWriter, req *mux.Request) {
-		res.Write("# BountyForge — 404 Not Found\n\n")
-		res.Write("Unknown route `" + escrowmath.SanitizeInline(req.Path, 80) + "`.\n\n")
-		res.Write("[Back to Board](:)\n")
-	})
+// ---------------------------------------------------------------------------
+// Internal security, arithmetic, indexing, and validation helpers
+// ---------------------------------------------------------------------------
+
+func requireLiveRealm(cur realm) {
+	if !cur.IsCurrent() {
+		panic("bountyforge: invalid or stale realm context")
+	}
 }
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-func requireUserCall(cur realm) address {
+// requireDirectUserRealm guards entrypoints that inspect unsafe.OriginSend().
+// Callers MUST invoke runtime.AssertOriginCall() directly at the top of the
+// exported MsgCall function (not inside a helper) so frame-depth verification passes.
+func requireDirectUserRealm(cur realm) address {
+	requireLiveRealm(cur)
 	if !cur.Previous().IsUserCall() {
-		panic("bountyforge: only direct user calls (maketx call) are accepted")
+		panic("bountyforge: only direct user calls (maketx call) are accepted for OriginSend deposits")
 	}
 	return cur.Previous().Address()
 }
 
-func ugnotFromCoins(coins chain.Coins) int64 {
-	var total int64
-	for _, c := range coins {
-		if c.Denom == "ugnot" {
-			total += c.Amount
-		}
+// requireCaller authenticates either a direct EOA or a calling realm (such as a Gno DAO)
+// strictly via the live crossing frame's immediate caller (never tx.origin).
+func requireCaller(cur realm) address {
+	requireLiveRealm(cur)
+	caller := cur.Previous().Address()
+	if !caller.IsValid() {
+		panic("bountyforge: invalid caller address")
 	}
-	return total
+	return caller
+}
+
+func strictUgnotFromOriginSend() int64 {
+	sent := unsafe.OriginSend()
+	if len(sent) != 1 || sent[0].Denom != "ugnot" || sent[0].Amount <= 0 {
+		panic("bountyforge: transaction must attach strictly positive ugnot only")
+	}
+	return sent[0].Amount
+}
+
+func mustAdd64(a, b int64, ctx string) int64 {
+	sum, ok := overflow.Add64(a, b)
+	if !ok {
+		panic("bountyforge: int64 overflow in " + ctx)
+	}
+	return sum
+}
+
+func mustSub64(a, b int64, ctx string) int64 {
+	diff, ok := overflow.Sub64(a, b)
+	if !ok || diff < 0 {
+		panic("bountyforge: int64 underflow in " + ctx)
+	}
+	return diff
+}
+
+func cleanStoredText(raw string, maxRunes int, multiline bool) string {
+	s := sanitize.NormalizeBreaks(raw)
+	s = sanitize.StripBidiAndZeroWidth(s)
+	s = strings.ReplaceAll(s, "\x00", "\uFFFD")
+	if !multiline {
+		s = strings.ReplaceAll(s, "\n", " ")
+		s = strings.ReplaceAll(s, "\t", " ")
+	}
+	s = strings.TrimSpace(s)
+	if maxRunes > 0 && utf8.RuneCountInString(s) > maxRunes {
+		panic(ufmt.Sprintf("bountyforge: text exceeds maximum length of %d characters", maxRunes))
+	}
+	return s
+}
+
+func validateProofURL(raw string) string {
+	u := cleanStoredText(raw, MaxProofURLRunes, false)
+	if u == "" {
+		panic("bountyforge: proofURL cannot be empty")
+	}
+	lower := strings.ToLower(u)
+	if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "http://") {
+		panic("bountyforge: proofURL must start with https:// or http://")
+	}
+	if sanitize.URL(u) == "" {
+		panic("bountyforge: proofURL failed URL safety validation")
+	}
+	return u
+}
+
+func statusTree(status string) *avl.Tree {
+	switch status {
+	case StatusOpen:
+		return openBounties
+	case StatusPaid:
+		return paidBounties
+	case StatusDisputed:
+		return disputedBounties
+	case StatusCancelled:
+		return cancelledBounties
+	default:
+		return nil
+	}
+}
+
+func moveBountyStatus(b *Bounty, oldStatus, newStatus string) {
+	key := seqid.ID(b.ID).String()
+	if oldTree := statusTree(oldStatus); oldTree != nil {
+		oldTree.Remove(key)
+	}
+	b.Status = newStatus
+	if newTree := statusTree(newStatus); newTree != nil {
+		newTree.Set(key, b)
+	}
 }
 
 func getBountyByUint64(id uint64) (*Bounty, string) {
@@ -152,24 +282,100 @@ func getBountyByUint64(id uint64) (*Bounty, string) {
 	return raw.(*Bounty), key
 }
 
-func creditBuilder(addr address, ugnot int64, height int64) {
+func (b *Bounty) activeSubmissionCount() int {
+	n := 0
+	for _, s := range b.Submissions {
+		if !s.Withdrawn {
+			n++
+		}
+	}
+	return n
+}
+
+func (b *Bounty) hasContributor(addr address) bool {
+	for _, c := range b.Contributions {
+		if c.Sponsor == addr {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *Bounty) depositAmounts() []int64 {
+	out := make([]int64, len(b.Contributions))
+	for i, c := range b.Contributions {
+		out[i] = c.Amount
+	}
+	return out
+}
+
+func padUint64(v uint64, width int) string {
+	s := strconv.FormatUint(v, 10)
+	if len(s) >= width {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(width)
+	for i := len(s); i < width; i++ {
+		b.WriteByte('0')
+	}
+	b.WriteString(s)
+	return b.String()
+}
+
+// leaderboardKey orders builders deterministically in ascending AVL traversal:
+// XP DESC, TotalEarned DESC, Address ASC — O(log N) updates, O(pageSize) renders.
+func leaderboardKey(xp, earned int64, addr address) string {
+	if xp < 0 {
+		xp = 0
+	}
+	if earned < 0 {
+		earned = 0
+	}
+	invXP := uint64(math.MaxInt64 - xp)
+	invEarned := uint64(math.MaxInt64 - earned)
+	return padUint64(invXP, 19) + ":" + padUint64(invEarned, 19) + ":" + addr.String()
+}
+
+func creditBuilder(addr address, creator address, ugnot int64, height int64, awardCompletion bool) {
+	if ugnot <= 0 {
+		panic("bountyforge: cannot credit non-positive builder payout")
+	}
 	key := addr.String()
 	var prof *BuilderProfile
+	var oldKey string
 	if raw := builders.Get(key); raw != nil {
 		prof = raw.(*BuilderProfile)
+		oldKey = leaderboardKey(prof.XP, prof.TotalEarned, prof.Address)
 	} else {
-		prof = &BuilderProfile{Address: addr}
+		prof = &BuilderProfile{
+			Address:  addr,
+			creators: avl.NewTree(),
+		}
 	}
-	prof.Completed++
-	prof.TotalEarned += ugnot
-	prof.XP += escrowmath.ComputeXP(ugnot)
+	if oldKey != "" {
+		leaderboard.Remove(oldKey)
+	}
+
+	prof.TotalEarned = mustAdd64(prof.TotalEarned, ugnot, "builder total earned")
+	if awardCompletion {
+		prof.Completed++
+		prof.XP = mustAdd64(prof.XP, escrowmath.ComputeXP(ugnot), "builder XP")
+		if creator.IsValid() {
+			prof.creators.Set(creator.String(), true)
+		}
+	}
 	prof.LastHeight = height
 	builders.Set(key, prof)
+	leaderboard.Set(leaderboardKey(prof.XP, prof.TotalEarned, prof.Address), prof)
 }
 
 func releaseFunds(cur realm, recipient address, ugnot int64) {
 	if ugnot <= 0 {
-		return
+		panic("bountyforge: payout amount must be strictly positive")
+	}
+	if !recipient.IsValid() {
+		panic("bountyforge: invalid recipient address")
 	}
 	realmAddr := cur.Address()
 	b := banker.NewBanker(banker.BankerTypeRealmSend, cur)
@@ -180,7 +386,14 @@ func releaseFunds(cur realm, recipient address, ugnot int64) {
 }
 
 func parseIntList(csv string) []int {
-	parts := strings.Split(strings.TrimSpace(csv), ",")
+	trimmed := strings.TrimSpace(csv)
+	if trimmed == "" {
+		panic("bountyforge: empty integer CSV")
+	}
+	parts := strings.Split(trimmed, ",")
+	if len(parts) > MaxSubmissions {
+		panic("bountyforge: too many entries in CSV")
+	}
 	out := make([]int, 0, len(parts))
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
@@ -197,7 +410,14 @@ func parseIntList(csv string) []int {
 }
 
 func parseInt64List(csv string) []int64 {
-	parts := strings.Split(strings.TrimSpace(csv), ",")
+	trimmed := strings.TrimSpace(csv)
+	if trimmed == "" {
+		panic("bountyforge: empty int64 CSV")
+	}
+	parts := strings.Split(trimmed, ",")
+	if len(parts) > MaxSubmissions {
+		panic("bountyforge: too many entries in CSV")
+	}
 	out := make([]int64, 0, len(parts))
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
@@ -213,25 +433,16 @@ func parseInt64List(csv string) []int64 {
 	return out
 }
 
-// ---------------------------------------------------------------------------
-// Public Realm Transactions
-// ---------------------------------------------------------------------------
-
-// CreateBounty locks attached ugnot into on-chain escrow and opens a new bounty.
-// arbiterStr may be empty if no third-party dispute arbiter is needed.
-// deadlineBlocks sets expiry relative to current block height (0 = no expiry).
-func CreateBounty(cur realm, title, summary, tags, arbiterStr string, deadlineBlocks int64) uint64 {
-	caller := requireUserCall(cur)
-
-	cleanTitle := escrowmath.SanitizeInline(title, MaxTitleLen)
+func createBountyCore(cur realm, caller address, amt int64, title, summary, tags, arbiterStr string, deadlineBlocks int64) uint64 {
+	cleanTitle := cleanStoredText(title, MaxTitleRunes, false)
 	if cleanTitle == "" {
 		panic("bountyforge: title cannot be empty")
 	}
-	cleanSummary := escrowmath.SanitizeInline(summary, MaxSummaryLen)
+	cleanSummary := cleanStoredText(summary, MaxSummaryRunes, true)
 	if cleanSummary == "" {
 		panic("bountyforge: summary cannot be empty")
 	}
-	cleanTags := escrowmath.SanitizeInline(tags, MaxTagsLen)
+	cleanTags := cleanStoredText(tags, MaxTagsRunes, false)
 	if deadlineBlocks < 0 {
 		panic("bountyforge: deadlineBlocks cannot be negative")
 	}
@@ -248,22 +459,25 @@ func CreateBounty(cur realm, title, summary, tags, arbiterStr string, deadlineBl
 		}
 	}
 
-	amt := ugnotFromCoins(unsafe.OriginSend())
 	if amt < MinRewardUgnot {
 		panic(ufmt.Sprintf("bountyforge: reward must be at least %d ugnot", MinRewardUgnot))
 	}
 
+	newTotalEscrowed := mustAdd64(totalEscrowed, amt, "totalEscrowed")
+
 	// Enforce solvency invariant: realm balance must cover all existing escrow + new deposit.
 	realmAddr := cur.Address()
 	b := banker.NewBanker(banker.BankerTypeRealmSend, cur)
-	if b.GetCoin(realmAddr, "ugnot") < totalEscrowed+amt {
+	if b.GetCoin(realmAddr, "ugnot") < newTotalEscrowed {
 		panic("bountyforge: realm balance did not receive declared ugnot deposit")
 	}
 
 	height := runtime.ChainHeight()
 	var deadlineH int64
 	if deadlineBlocks > 0 {
-		deadlineH = height + deadlineBlocks
+		deadlineH = mustAdd64(height, deadlineBlocks, "deadlineH")
+		// Ensure deadlineH + ReviewGraceBlocks can never overflow later.
+		_ = mustAdd64(deadlineH, ReviewGraceBlocks, "review grace deadline")
 	}
 
 	id := nextID.Next()
@@ -278,10 +492,15 @@ func CreateBounty(cur realm, title, summary, tags, arbiterStr string, deadlineBl
 		Status:        StatusOpen,
 		CreatedHeight: height,
 		DeadlineH:     deadlineH,
+		Contributions: []*Contribution{
+			{Sponsor: caller, Amount: amt},
+		},
 	}
 
-	bounties.Set(id.String(), bounty)
-	totalEscrowed += amt
+	key := id.String()
+	bounties.Set(key, bounty)
+	openBounties.Set(key, bounty)
+	totalEscrowed = newTotalEscrowed
 	openCount++
 
 	chain.Emit(
@@ -290,31 +509,53 @@ func CreateBounty(cur realm, title, summary, tags, arbiterStr string, deadlineBl
 		"creator", caller.String(),
 		"reward_ugnot", strconv.FormatInt(amt, 10),
 		"arbiter", arbiter.String(),
+		"deadline_height", strconv.FormatInt(deadlineH, 10),
 	)
 	return bounty.ID
 }
 
-// TopUpBounty allows any sponsor to add extra ugnot to an existing OPEN bounty.
-func TopUpBounty(cur realm, bountyID uint64) int64 {
-	caller := requireUserCall(cur)
+func topUpBountyCore(cur realm, caller address, bountyID uint64, amt int64) int64 {
 	bounty, _ := getBountyByUint64(bountyID)
 	if bounty.Status != StatusOpen {
 		panic("bountyforge: can only top up an OPEN bounty")
 	}
-
-	amt := ugnotFromCoins(unsafe.OriginSend())
+	if bounty.DeadlineH > 0 && runtime.ChainHeight() > bounty.DeadlineH {
+		panic("bountyforge: cannot top up after submission deadline has passed")
+	}
 	if amt <= 0 {
 		panic("bountyforge: top-up amount must be positive")
 	}
 
+	newTotalEscrowed := mustAdd64(totalEscrowed, amt, "totalEscrowed")
+	newReward := mustAdd64(bounty.RewardUgnot, amt, "bounty reward")
+
 	realmAddr := cur.Address()
 	b := banker.NewBanker(banker.BankerTypeRealmSend, cur)
-	if b.GetCoin(realmAddr, "ugnot") < totalEscrowed+amt {
+	if b.GetCoin(realmAddr, "ugnot") < newTotalEscrowed {
 		panic("bountyforge: realm balance did not receive top-up ugnot")
 	}
 
-	bounty.RewardUgnot += amt
-	totalEscrowed += amt
+	// Track per-sponsor contribution so refunds never hand sponsor funds to the creator.
+	updated := false
+	for _, c := range bounty.Contributions {
+		if c.Sponsor == caller {
+			c.Amount = mustAdd64(c.Amount, amt, "sponsor contribution")
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		if len(bounty.Contributions) >= MaxSponsors {
+			panic("bountyforge: maximum sponsors reached for this bounty")
+		}
+		bounty.Contributions = append(bounty.Contributions, &Contribution{
+			Sponsor: caller,
+			Amount:  amt,
+		})
+	}
+
+	bounty.RewardUgnot = newReward
+	totalEscrowed = newTotalEscrowed
 
 	chain.Emit(
 		"BountyToppedUp",
@@ -326,12 +567,65 @@ func TopUpBounty(cur realm, bountyID uint64) int64 {
 	return bounty.RewardUgnot
 }
 
-// SubmitWork registers a builder's deliverable proof URL and notes on an OPEN bounty.
+// ---------------------------------------------------------------------------
+// Public Realm Transactions
+// ---------------------------------------------------------------------------
+
+// CreateBounty locks attached ugnot into on-chain escrow and opens a new bounty.
+// arbiterStr may be empty if no third-party dispute arbiter is needed.
+// deadlineBlocks sets submission expiry relative to current block height (0 = no expiry).
+func CreateBounty(cur realm, title, summary, tags, arbiterStr string, deadlineBlocks int64) uint64 {
+	runtime.AssertOriginCall()
+	caller := requireDirectUserRealm(cur)
+	amt := strictUgnotFromOriginSend()
+	return createBountyCore(cur, caller, amt, title, summary, tags, arbiterStr, deadlineBlocks)
+}
+
+// CreateBountyWithBanker enables Gno DAOs and composable realms to fund bounties
+// atomically using a canonical Banker (defending Gno Security Threat Class 3).
+func CreateBountyWithBanker(cur realm, payerBanker banker.Banker, amt int64, title, summary, tags, arbiterStr string, deadlineBlocks int64) uint64 {
+	caller := requireCaller(cur)
+	if !banker.IsCanonical(payerBanker) {
+		panic("bountyforge: non-canonical banker rejected")
+	}
+	if amt < MinRewardUgnot {
+		panic(ufmt.Sprintf("bountyforge: reward must be at least %d ugnot", MinRewardUgnot))
+	}
+	payerBanker.SendCoins(caller, cur.Address(), chain.Coins{chain.NewCoin("ugnot", amt)})
+	return createBountyCore(cur, caller, amt, title, summary, tags, arbiterStr, deadlineBlocks)
+}
+
+// TopUpBounty allows any direct EOA sponsor to add extra ugnot to an active OPEN bounty.
+func TopUpBounty(cur realm, bountyID uint64) int64 {
+	runtime.AssertOriginCall()
+	caller := requireDirectUserRealm(cur)
+	amt := strictUgnotFromOriginSend()
+	return topUpBountyCore(cur, caller, bountyID, amt)
+}
+
+// TopUpBountyWithBanker enables DAOs and realms to crowdfund an OPEN bounty via a canonical Banker.
+func TopUpBountyWithBanker(cur realm, payerBanker banker.Banker, bountyID uint64, amt int64) int64 {
+	caller := requireCaller(cur)
+	if !banker.IsCanonical(payerBanker) {
+		panic("bountyforge: non-canonical banker rejected")
+	}
+	if amt <= 0 {
+		panic("bountyforge: top-up amount must be positive")
+	}
+	payerBanker.SendCoins(caller, cur.Address(), chain.Coins{chain.NewCoin("ugnot", amt)})
+	return topUpBountyCore(cur, caller, bountyID, amt)
+}
+
+// SubmitWork registers (or updates) a builder's deliverable proof URL and notes on an OPEN bounty.
+// Supports both human EOAs and Gno v1.8.0 scoped session keys for AI agents.
 func SubmitWork(cur realm, bountyID uint64, proofURL, notes string) int {
-	caller := requireUserCall(cur)
+	caller := requireCaller(cur)
 	bounty, _ := getBountyByUint64(bountyID)
 	if bounty.Status != StatusOpen {
 		panic("bountyforge: submissions are only accepted on OPEN bounties")
+	}
+	if bounty.DeadlineH > 0 && runtime.ChainHeight() > bounty.DeadlineH {
+		panic("bountyforge: submission deadline has passed")
 	}
 	if caller == bounty.Creator {
 		panic("bountyforge: bounty creator cannot submit work to their own bounty")
@@ -339,30 +633,32 @@ func SubmitWork(cur realm, bountyID uint64, proofURL, notes string) int {
 	if bounty.Arbiter != "" && caller == bounty.Arbiter {
 		panic("bountyforge: bounty arbiter cannot submit work")
 	}
-	if len(bounty.Submissions) >= MaxSubmissions {
-		panic("bountyforge: maximum submissions reached for this bounty")
-	}
 
-	cleanProof := escrowmath.SanitizeInline(proofURL, MaxProofURLLen)
-	if cleanProof == "" {
-		panic("bountyforge: proofURL cannot be empty")
-	}
-	cleanNotes := escrowmath.SanitizeInline(notes, MaxNotesLen)
+	cleanProof := validateProofURL(proofURL)
+	cleanNotes := cleanStoredText(notes, MaxNotesRunes, false)
+	_, _, _, isSession := runtime.GetSessionInfo()
 
-	// Allow updating an existing submission from the same builder instead of spamming duplicates.
+	// Allow updating (or reactivating) an existing submission from the same builder.
 	for _, sub := range bounty.Submissions {
 		if sub.Builder == caller {
 			sub.ProofURL = cleanProof
 			sub.Notes = cleanNotes
 			sub.SubmittedH = runtime.ChainHeight()
+			sub.ViaSession = isSession
+			sub.Withdrawn = false
 			chain.Emit(
 				"WorkUpdated",
 				"id", strconv.FormatUint(bounty.ID, 10),
 				"builder", caller.String(),
 				"index", strconv.Itoa(sub.Index),
+				"via_session", strconv.FormatBool(isSession),
 			)
 			return sub.Index
 		}
+	}
+
+	if len(bounty.Submissions) >= MaxSubmissions {
+		panic("bountyforge: maximum submissions reached for this bounty")
 	}
 
 	idx := len(bounty.Submissions)
@@ -372,6 +668,7 @@ func SubmitWork(cur realm, bountyID uint64, proofURL, notes string) int {
 		ProofURL:   cleanProof,
 		Notes:      cleanNotes,
 		SubmittedH: runtime.ChainHeight(),
+		ViaSession: isSession,
 	})
 
 	chain.Emit(
@@ -379,13 +676,37 @@ func SubmitWork(cur realm, bountyID uint64, proofURL, notes string) int {
 		"id", strconv.FormatUint(bounty.ID, 10),
 		"builder", caller.String(),
 		"index", strconv.Itoa(idx),
+		"via_session", strconv.FormatBool(isSession),
 	)
 	return idx
 }
 
+// WithdrawSubmission allows a builder to retract their submission while the bounty is OPEN.
+// Indices remain immutable to prevent submissionIdx front-running.
+func WithdrawSubmission(cur realm, bountyID uint64) {
+	caller := requireCaller(cur)
+	bounty, _ := getBountyByUint64(bountyID)
+	if bounty.Status != StatusOpen {
+		panic("bountyforge: can only withdraw submission on OPEN bounties")
+	}
+	for _, sub := range bounty.Submissions {
+		if sub.Builder == caller && !sub.Withdrawn {
+			sub.Withdrawn = true
+			chain.Emit(
+				"WorkWithdrawn",
+				"id", strconv.FormatUint(bounty.ID, 10),
+				"builder", caller.String(),
+				"index", strconv.Itoa(sub.Index),
+			)
+			return
+		}
+	}
+	panic("bountyforge: no active submission found for caller")
+}
+
 // ApproveAndPay releases 100% of a bounty's escrowed ugnot to the winning builder.
 func ApproveAndPay(cur realm, bountyID uint64, submissionIdx int) {
-	caller := requireUserCall(cur)
+	caller := requireCaller(cur)
 	bounty, _ := getBountyByUint64(bountyID)
 	if caller != bounty.Creator {
 		panic("bountyforge: only the bounty creator can approve payout")
@@ -396,20 +717,24 @@ func ApproveAndPay(cur realm, bountyID uint64, submissionIdx int) {
 	if submissionIdx < 0 || submissionIdx >= len(bounty.Submissions) {
 		panic("bountyforge: submission index out of range")
 	}
+	sub := bounty.Submissions[submissionIdx]
+	if sub.Withdrawn {
+		panic("bountyforge: cannot pay a withdrawn submission")
+	}
 
-	winner := bounty.Submissions[submissionIdx].Builder
+	winner := sub.Builder
 	amount := bounty.RewardUgnot
 
 	// Effects before interactions (CEI pattern).
-	bounty.Status = StatusPaid
+	moveBountyStatus(bounty, StatusOpen, StatusPaid)
 	bounty.Payouts = []*PayoutRecord{
 		{Recipient: winner, Amount: amount, Bps: escrowmath.TotalBPS},
 	}
-	totalEscrowed -= amount
-	totalPaidOut += amount
+	totalEscrowed = mustSub64(totalEscrowed, amount, "totalEscrowed")
+	totalPaidOut = mustAdd64(totalPaidOut, amount, "totalPaidOut")
 	openCount--
 	paidCount++
-	creditBuilder(winner, amount, runtime.ChainHeight())
+	creditBuilder(winner, bounty.Creator, amount, runtime.ChainHeight(), true)
 
 	releaseFunds(cur, winner, amount)
 
@@ -422,9 +747,10 @@ func ApproveAndPay(cur realm, bountyID uint64, submissionIdx int) {
 }
 
 // SplitAndPay splits a bounty's escrow across multiple contributors using exact
-// dust-conserving basis points (must sum to 10000).
+// overflow-proof, dust-conserving basis points (each weight 1..10000, sum == 10000,
+// every resulting share strictly > 0 ugnot).
 func SplitAndPay(cur realm, bountyID uint64, indicesCSV, bpsCSV string) {
-	caller := requireUserCall(cur)
+	caller := requireCaller(cur)
 	bounty, _ := getBountyByUint64(bountyID)
 	if caller != bounty.Creator {
 		panic("bountyforge: only the bounty creator can split payout")
@@ -448,6 +774,9 @@ func SplitAndPay(cur realm, bountyID uint64, indicesCSV, bpsCSV string) {
 		if seen[idx] {
 			panic("bountyforge: duplicate submission index in split")
 		}
+		if bounty.Submissions[idx].Withdrawn {
+			panic("bountyforge: cannot split payout to a withdrawn submission")
+		}
 		seen[idx] = true
 		recipients[i] = bounty.Submissions[idx].Builder
 	}
@@ -458,10 +787,21 @@ func SplitAndPay(cur realm, bountyID uint64, indicesCSV, bpsCSV string) {
 	}
 
 	amount := bounty.RewardUgnot
+	var shareSum int64
+	for _, s := range shares {
+		if s <= 0 {
+			panic("bountyforge: split produced non-positive share")
+		}
+		shareSum = mustAdd64(shareSum, s, "split share sum")
+	}
+	if shareSum != amount {
+		panic("bountyforge: split conservation invariant violated")
+	}
+
 	height := runtime.ChainHeight()
 
-	// Effects before interactions.
-	bounty.Status = StatusPaid
+	// Effects before interactions (CEI pattern).
+	moveBountyStatus(bounty, StatusOpen, StatusPaid)
 	bounty.Payouts = make([]*PayoutRecord, len(recipients))
 	for i, rec := range recipients {
 		bounty.Payouts[i] = &PayoutRecord{
@@ -469,10 +809,10 @@ func SplitAndPay(cur realm, bountyID uint64, indicesCSV, bpsCSV string) {
 			Amount:    shares[i],
 			Bps:       bps[i],
 		}
-		creditBuilder(rec, shares[i], height)
+		creditBuilder(rec, bounty.Creator, shares[i], height, true)
 	}
-	totalEscrowed -= amount
-	totalPaidOut += amount
+	totalEscrowed = mustSub64(totalEscrowed, amount, "totalEscrowed")
+	totalPaidOut = mustAdd64(totalPaidOut, amount, "totalPaidOut")
 	openCount--
 	paidCount++
 
@@ -488,10 +828,11 @@ func SplitAndPay(cur realm, bountyID uint64, indicesCSV, bpsCSV string) {
 	)
 }
 
-// CancelAndRefund lets the creator reclaim escrowed ugnot if there are zero
-// submissions OR if the bounty's block deadline has passed without dispute.
+// CancelAndRefund cancels an OPEN bounty and refunds EVERY contributor (creator +
+// all crowdfund sponsors) their exact deposited ugnot.
+// Allowed if there are zero active submissions, OR after DeadlineH + ReviewGraceBlocks.
 func CancelAndRefund(cur realm, bountyID uint64) {
-	caller := requireUserCall(cur)
+	caller := requireCaller(cur)
 	bounty, _ := getBountyByUint64(bountyID)
 	if caller != bounty.Creator {
 		panic("bountyforge: only the bounty creator can cancel")
@@ -499,32 +840,51 @@ func CancelAndRefund(cur realm, bountyID uint64) {
 	if bounty.Status != StatusOpen {
 		panic("bountyforge: only OPEN bounties can be cancelled")
 	}
-	if len(bounty.Submissions) > 0 {
-		if bounty.DeadlineH == 0 || runtime.ChainHeight() <= bounty.DeadlineH {
+	if bounty.activeSubmissionCount() > 0 {
+		if bounty.DeadlineH == 0 {
 			panic("bountyforge: cannot cancel while submissions exist before deadline")
+		}
+		cancelAfter := mustAdd64(bounty.DeadlineH, ReviewGraceBlocks, "review grace deadline")
+		if runtime.ChainHeight() <= cancelAfter {
+			panic("bountyforge: cannot cancel while submissions exist before deadline + review grace")
 		}
 	}
 
-	refund := bounty.RewardUgnot
-	bounty.Status = StatusCancelled
-	totalEscrowed -= refund
+	refundTotal := bounty.RewardUgnot
+	refundRecords := make([]*RefundRecord, len(bounty.Contributions))
+	var verifySum int64
+	for i, c := range bounty.Contributions {
+		refundRecords[i] = &RefundRecord{Sponsor: c.Sponsor, Amount: c.Amount}
+		verifySum = mustAdd64(verifySum, c.Amount, "cancel refund sum")
+	}
+	if verifySum != refundTotal {
+		panic("bountyforge: sponsor ledger mismatch")
+	}
+
+	// Effects before interactions (CEI pattern).
+	moveBountyStatus(bounty, StatusOpen, StatusCancelled)
+	bounty.Refunds = refundRecords
+	totalEscrowed = mustSub64(totalEscrowed, refundTotal, "totalEscrowed")
 	openCount--
 	cancelledCnt++
 
-	releaseFunds(cur, bounty.Creator, refund)
+	for _, r := range refundRecords {
+		releaseFunds(cur, r.Sponsor, r.Amount)
+	}
 
 	chain.Emit(
 		"BountyCancelled",
 		"id", strconv.FormatUint(bounty.ID, 10),
 		"creator", bounty.Creator.String(),
-		"refund_ugnot", strconv.FormatInt(refund, 10),
+		"refund_ugnot", strconv.FormatInt(refundTotal, 10),
+		"sponsors_refunded", strconv.Itoa(len(refundRecords)),
 	)
 }
 
 // OpenDispute freezes an OPEN bounty with a configured arbiter for resolution.
-// Either the creator or any builder who submitted work may open a dispute.
+// Either the creator or any builder with an active submission may open a dispute.
 func OpenDispute(cur realm, bountyID uint64, reason string) {
-	caller := requireUserCall(cur)
+	caller := requireCaller(cur)
 	bounty, _ := getBountyByUint64(bountyID)
 	if bounty.Status != StatusOpen {
 		panic("bountyforge: only OPEN bounties can enter dispute")
@@ -532,30 +892,32 @@ func OpenDispute(cur realm, bountyID uint64, reason string) {
 	if bounty.Arbiter == "" {
 		panic("bountyforge: bounty has no arbiter configured")
 	}
-	if len(bounty.Submissions) == 0 {
-		panic("bountyforge: cannot dispute a bounty with zero submissions")
+	if bounty.activeSubmissionCount() == 0 {
+		panic("bountyforge: cannot dispute a bounty with zero active submissions")
 	}
 
 	authorized := caller == bounty.Creator
 	if !authorized {
 		for _, sub := range bounty.Submissions {
-			if sub.Builder == caller {
+			if sub.Builder == caller && !sub.Withdrawn {
 				authorized = true
 				break
 			}
 		}
 	}
 	if !authorized {
-		panic("bountyforge: only creator or a submitter can open a dispute")
+		panic("bountyforge: only creator or an active submitter can open a dispute")
 	}
 
-	cleanReason := escrowmath.SanitizeInline(reason, MaxNotesLen)
+	cleanReason := cleanStoredText(reason, MaxNotesRunes, true)
 	if cleanReason == "" {
 		panic("bountyforge: dispute reason cannot be empty")
 	}
 
-	bounty.Status = StatusDisputed
+	moveBountyStatus(bounty, StatusOpen, StatusDisputed)
 	bounty.DisputeReason = cleanReason
+	bounty.DisputeOpenedH = runtime.ChainHeight()
+	bounty.DisputeBy = caller
 	openCount--
 	disputedCount++
 
@@ -564,14 +926,15 @@ func OpenDispute(cur realm, bountyID uint64, reason string) {
 		"id", strconv.FormatUint(bounty.ID, 10),
 		"opened_by", caller.String(),
 		"arbiter", bounty.Arbiter.String(),
+		"opened_height", strconv.FormatInt(bounty.DisputeOpenedH, 10),
 	)
 }
 
 // ResolveDispute allows the designated arbiter to settle a DISPUTED bounty by
 // awarding builderBps (0..10000) to the selected submitter and refunding the
-// remaining basis points to the creator.
+// remaining pool pro-rata across ALL contributors (creator + crowdfund sponsors).
 func ResolveDispute(cur realm, bountyID uint64, submissionIdx int, builderBps int64) {
-	caller := requireUserCall(cur)
+	caller := requireCaller(cur)
 	bounty, _ := getBountyByUint64(bountyID)
 	if bounty.Status != StatusDisputed {
 		panic("bountyforge: bounty is not DISPUTED")
@@ -582,17 +945,25 @@ func ResolveDispute(cur realm, bountyID uint64, submissionIdx int, builderBps in
 	if builderBps < 0 || builderBps > escrowmath.TotalBPS {
 		panic("bountyforge: builderBps must be between 0 and 10000")
 	}
-	if submissionIdx < 0 || submissionIdx >= len(bounty.Submissions) {
-		panic("bountyforge: submission index out of range")
+
+	var builder address
+	if builderBps > 0 {
+		if submissionIdx < 0 || submissionIdx >= len(bounty.Submissions) {
+			panic("bountyforge: submission index out of range")
+		}
+		sub := bounty.Submissions[submissionIdx]
+		if sub.Withdrawn {
+			panic("bountyforge: cannot award dispute to a withdrawn submission")
+		}
+		builder = sub.Builder
 	}
 
-	builder := bounty.Submissions[submissionIdx].Builder
 	total := bounty.RewardUgnot
-	var builderShare, creatorRefund int64
+	var builderShare, refundPool int64
 
 	switch builderBps {
 	case 0:
-		creatorRefund = total
+		refundPool = total
 	case escrowmath.TotalBPS:
 		builderShare = total
 	default:
@@ -601,37 +972,48 @@ func ResolveDispute(cur realm, bountyID uint64, submissionIdx int, builderBps in
 			panic(err.Error())
 		}
 		builderShare = shares[0]
-		creatorRefund = shares[1]
+		refundPool = shares[1]
 	}
 
-	// Effects before interactions.
-	totalEscrowed -= total
+	var refundRecords []*RefundRecord
+	if refundPool > 0 {
+		sponsorRefunds, err := escrowmath.ProRataRefund(refundPool, bounty.depositAmounts())
+		if err != nil {
+			panic(err.Error())
+		}
+		for i, amt := range sponsorRefunds {
+			if amt > 0 {
+				refundRecords = append(refundRecords, &RefundRecord{
+					Sponsor: bounty.Contributions[i].Sponsor,
+					Amount:  amt,
+				})
+			}
+		}
+	}
+
+	// Effects before interactions (CEI pattern).
+	totalEscrowed = mustSub64(totalEscrowed, total, "totalEscrowed")
 	disputedCount--
+	bounty.Refunds = refundRecords
+
 	if builderShare > 0 {
-		bounty.Status = StatusPaid
+		moveBountyStatus(bounty, StatusDisputed, StatusPaid)
 		paidCount++
-		totalPaidOut += builderShare
+		totalPaidOut = mustAdd64(totalPaidOut, builderShare, "totalPaidOut")
 		bounty.Payouts = []*PayoutRecord{
 			{Recipient: builder, Amount: builderShare, Bps: builderBps},
 		}
-		if creatorRefund > 0 {
-			bounty.Payouts = append(bounty.Payouts, &PayoutRecord{
-				Recipient: bounty.Creator,
-				Amount:    creatorRefund,
-				Bps:       escrowmath.TotalBPS - builderBps,
-			})
-		}
-		creditBuilder(builder, builderShare, runtime.ChainHeight())
+		creditBuilder(builder, bounty.Creator, builderShare, runtime.ChainHeight(), builderBps >= MinDisputeWinBps)
 	} else {
-		bounty.Status = StatusCancelled
+		moveBountyStatus(bounty, StatusDisputed, StatusCancelled)
 		cancelledCnt++
 	}
 
 	if builderShare > 0 {
 		releaseFunds(cur, builder, builderShare)
 	}
-	if creatorRefund > 0 {
-		releaseFunds(cur, bounty.Creator, creatorRefund)
+	for _, r := range refundRecords {
+		releaseFunds(cur, r.Sponsor, r.Amount)
 	}
 
 	chain.Emit(
@@ -639,278 +1021,59 @@ func ResolveDispute(cur realm, bountyID uint64, submissionIdx int, builderBps in
 		"id", strconv.FormatUint(bounty.ID, 10),
 		"arbiter", caller.String(),
 		"builder_ugnot", strconv.FormatInt(builderShare, 10),
-		"creator_refund_ugnot", strconv.FormatInt(creatorRefund, 10),
+		"refund_pool_ugnot", strconv.FormatInt(refundPool, 10),
 	)
 }
 
-// ---------------------------------------------------------------------------
-// Read-Only View Functions (ABCI vm/qeval friendly)
-// ---------------------------------------------------------------------------
-
-// TotalEscrowed returns the total ugnot currently locked across active bounties.
-func TotalEscrowed() int64 {
-	return totalEscrowed
-}
-
-// TotalPaidOut returns cumulative ugnot paid to builders across all settled bounties.
-func TotalPaidOut() int64 {
-	return totalPaidOut
-}
-
-// BountyCount returns total number of bounties created.
-func BountyCount() int {
-	return bounties.Size()
-}
-
-// BuilderXP returns the accumulated reputation XP for a builder address.
-func BuilderXP(addr address) int64 {
-	raw := builders.Get(addr.String())
-	if raw == nil {
-		return 0
-	}
-	return raw.(*BuilderProfile).XP
-}
-
-// ---------------------------------------------------------------------------
-// gnoweb Markdown Render Entrypoint
-// ---------------------------------------------------------------------------
-
-// Render serves human- and AI-readable Markdown pages over gnoweb.
-func Render(path string) string {
-	return router.Render(path)
-}
-
-func renderHome(res *mux.ResponseWriter, req *mux.Request) {
-	filter := strings.ToUpper(strings.TrimSpace(req.Query.Get("status")))
-
-	res.Write("# BountyForge — On-Chain Micro-Bounty Escrow & Builder Reputation\n\n")
-	res.Write("Trustless GNOT escrow, dust-free basis-point split payouts, optional arbiter dispute resolution, and verifiable builder XP on Gno.land.\n\n")
-	res.Write(ufmt.Sprintf(
-		"**Locked Escrow:** %s | **Total Paid:** %s | **Open:** %d | **Paid:** %d | **Disputed:** %d | **Builders:** %d\n\n",
-		escrowmath.FormatGNOT(totalEscrowed),
-		escrowmath.FormatGNOT(totalPaidOut),
-		openCount,
-		paidCount,
-		disputedCount,
-		builders.Size(),
-	))
-	res.Write("[All](:) · [Open](:?status=OPEN) · [Paid](:?status=PAID) · [Disputed](:?status=DISPUTED) · [Leaderboard](:leaderboard) · [Protocol Stats](:stats)\n\n")
-
-	if bounties.Size() == 0 {
-		res.Write("_No bounties posted yet. Call `CreateBounty` with `-send` GNOT to fund the first quest!_\n")
-		return
+// ExpireDispute is an escape hatch preventing permanent fund lock if an arbiter
+// becomes unresponsive for more than DisputeTimeoutBlocks. Any contributor or
+// active submitter can trigger exact refunds back to all contributors.
+func ExpireDispute(cur realm, bountyID uint64) {
+	caller := requireCaller(cur)
+	bounty, _ := getBountyByUint64(bountyID)
+	if bounty.Status != StatusDisputed {
+		panic("bountyforge: bounty is not DISPUTED")
 	}
 
-	res.Write("| ID | Title | Reward | Status | Submissions | Tags |\n")
-	res.Write("|---|---|---|---|---|---|\n")
-
-	shown := 0
-	bounties.ReverseIterate("", "", func(_ string, val any) bool {
-		b := val.(*Bounty)
-		if filter != "" && b.Status != filter {
-			return false
+	authorized := bounty.hasContributor(caller)
+	if !authorized {
+		for _, sub := range bounty.Submissions {
+			if sub.Builder == caller && !sub.Withdrawn {
+				authorized = true
+				break
+			}
 		}
-		res.Write(ufmt.Sprintf(
-			"| [#%d](:bounty/%d) | %s | %s | `%s` | %d | %s |\n",
-			b.ID,
-			b.ID,
-			b.Title,
-			escrowmath.FormatGNOT(b.RewardUgnot),
-			b.Status,
-			len(b.Submissions),
-			b.Tags,
-		))
-		shown++
-		return shown >= 50
-	})
-
-	if shown == 0 {
-		res.Write(ufmt.Sprintf("\n_No bounties match status `%s`._\n", escrowmath.SanitizeInline(filter, 20)))
 	}
-}
-
-func renderBountyDetail(res *mux.ResponseWriter, req *mux.Request) {
-	rawID := req.GetVar("id")
-	idNum, err := strconv.ParseUint(rawID, 10, 64)
-	if err != nil || idNum == 0 {
-		res.Write("# Invalid Bounty ID\n\n[Back to Board](:)\n")
-		return
-	}
-	raw := bounties.Get(seqid.ID(idNum).String())
-	if raw == nil {
-		res.Write(ufmt.Sprintf("# Bounty #%d Not Found\n\n[Back to Board](:)\n", idNum))
-		return
-	}
-	b := raw.(*Bounty)
-
-	res.Write(ufmt.Sprintf("# Bounty #%d: %s\n\n", b.ID, b.Title))
-	res.Write(ufmt.Sprintf("- **Status:** `%s`\n", b.Status))
-	res.Write(ufmt.Sprintf("- **Reward Pool:** %s (`%d ugnot`)\n", escrowmath.FormatGNOT(b.RewardUgnot), b.RewardUgnot))
-	res.Write(ufmt.Sprintf("- **Creator:** `%s`\n", b.Creator.String()))
-	if b.Arbiter != "" {
-		res.Write(ufmt.Sprintf("- **Dispute Arbiter:** `%s`\n", b.Arbiter.String()))
-	} else {
-		res.Write("- **Dispute Arbiter:** _None (creator-managed)_\n")
-	}
-	if b.DeadlineH > 0 {
-		res.Write(ufmt.Sprintf("- **Deadline Height:** #%d (current: #%d)\n", b.DeadlineH, runtime.ChainHeight()))
-	} else {
-		res.Write("- **Deadline Height:** _No expiry_\n")
-	}
-	if b.Tags != "" {
-		res.Write(ufmt.Sprintf("- **Tags:** `%s`\n", b.Tags))
-	}
-	res.Write("\n## Specification\n\n" + b.Summary + "\n\n")
-
-	if b.DisputeReason != "" {
-		res.Write("## Dispute Notice\n\n> " + b.DisputeReason + "\n\n")
+	if !authorized {
+		panic("bountyforge: only a contributor or active submitter can expire a timed-out dispute")
 	}
 
-	res.Write(ufmt.Sprintf("## Submissions (%d)\n\n", len(b.Submissions)))
-	if len(b.Submissions) == 0 {
-		res.Write("_No submissions yet._\n\n")
-	} else {
-		res.Write("| # | Builder | Proof | Notes | Block |\n")
-		res.Write("|---|---|---|---|---|\n")
-		for _, sub := range b.Submissions {
-			res.Write(ufmt.Sprintf(
-				"| %d | [%s](:builder/%s) | %s | %s | #%d |\n",
-				sub.Index,
-				shortAddr(sub.Builder),
-				sub.Builder.String(),
-				sub.ProofURL,
-				sub.Notes,
-				sub.SubmittedH,
-			))
-		}
-		res.Write("\n")
+	expireAt := mustAdd64(bounty.DisputeOpenedH, DisputeTimeoutBlocks, "dispute timeout")
+	if runtime.ChainHeight() <= expireAt {
+		panic("bountyforge: dispute has not timed out yet")
 	}
 
-	if len(b.Payouts) > 0 {
-		res.Write("## On-Chain Settlement\n\n")
-		res.Write("| Recipient | Share | Amount |\n")
-		res.Write("|---|---|---|\n")
-		for _, p := range b.Payouts {
-			res.Write(ufmt.Sprintf(
-				"| [%s](:builder/%s) | %.2f%% | %s |\n",
-				shortAddr(p.Recipient),
-				p.Recipient.String(),
-				float64(p.Bps)/100.0,
-				escrowmath.FormatGNOT(p.Amount),
-			))
-		}
-		res.Write("\n")
+	refundTotal := bounty.RewardUgnot
+	refundRecords := make([]*RefundRecord, len(bounty.Contributions))
+	for i, c := range bounty.Contributions {
+		refundRecords[i] = &RefundRecord{Sponsor: c.Sponsor, Amount: c.Amount}
 	}
 
-	res.Write("[Back to Board](:) · [Leaderboard](:leaderboard)\n")
-}
+	// Effects before interactions (CEI pattern).
+	moveBountyStatus(bounty, StatusDisputed, StatusCancelled)
+	bounty.Refunds = refundRecords
+	totalEscrowed = mustSub64(totalEscrowed, refundTotal, "totalEscrowed")
+	disputedCount--
+	cancelledCnt++
 
-func renderBuilderProfile(res *mux.ResponseWriter, req *mux.Request) {
-	addrStr := escrowmath.SanitizeInline(req.GetVar("addr"), 64)
-	raw := builders.Get(addrStr)
-	res.Write("# Builder Profile\n\n")
-	res.Write(ufmt.Sprintf("- **Address:** `%s`\n", addrStr))
-	if raw == nil {
-		res.Write("- **Tier:** `[N]` Novice\n- **XP:** 0\n- **Completed Bounties:** 0\n\n")
-		res.Write("[Back to Board](:) · [Leaderboard](:leaderboard)\n")
-		return
-	}
-	prof := raw.(*BuilderProfile)
-	tier, badge := escrowmath.TierForXP(prof.XP)
-	nextTarget := nextTierTarget(prof.XP)
-	res.Write(ufmt.Sprintf("- **Tier:** `%s` %s\n", badge, tier))
-	res.Write(ufmt.Sprintf("- **Reputation XP:** %d %s\n", prof.XP, escrowmath.ProgressBar(int(prof.XP), int(nextTarget), 12)))
-	res.Write(ufmt.Sprintf("- **Completed Bounties:** %d\n", prof.Completed))
-	res.Write(ufmt.Sprintf("- **Total Earned:** %s\n", escrowmath.FormatGNOT(prof.TotalEarned)))
-	res.Write(ufmt.Sprintf("- **Last Active Block:** #%d\n\n", prof.LastHeight))
-	res.Write("[Back to Board](:) · [Leaderboard](:leaderboard)\n")
-}
-
-func renderLeaderboard(res *mux.ResponseWriter, _ *mux.Request) {
-	res.Write("# BountyForge Builder Leaderboard\n\n")
-	if builders.Size() == 0 {
-		res.Write("_No settled bounties yet._\n\n[Back to Board](:)\n")
-		return
+	for _, r := range refundRecords {
+		releaseFunds(cur, r.Sponsor, r.Amount)
 	}
 
-	list := make([]*BuilderProfile, 0, builders.Size())
-	builders.Iterate("", "", func(_ string, val any) bool {
-		list = append(list, val.(*BuilderProfile))
-		return false
-	})
-
-	// Deterministic insertion sort by XP desc, then TotalEarned desc, then Address asc.
-	for i := 1; i < len(list); i++ {
-		cur := list[i]
-		j := i - 1
-		for j >= 0 && betterProfile(cur, list[j]) {
-			list[j+1] = list[j]
-			j--
-		}
-		list[j+1] = cur
-	}
-
-	res.Write("| Rank | Builder | Tier | XP | Completed | Earned |\n")
-	res.Write("|---|---|---|---|---|---|\n")
-	for i, prof := range list {
-		tier, badge := escrowmath.TierForXP(prof.XP)
-		res.Write(ufmt.Sprintf(
-			"| %d | [%s](:builder/%s) | `%s` %s | %d | %d | %s |\n",
-			i+1,
-			shortAddr(prof.Address),
-			prof.Address.String(),
-			badge,
-			tier,
-			prof.XP,
-			prof.Completed,
-			escrowmath.FormatGNOT(prof.TotalEarned),
-		))
-	}
-	res.Write("\n[Back to Board](:) · [Protocol Stats](:stats)\n")
-}
-
-func renderStats(res *mux.ResponseWriter, _ *mux.Request) {
-	res.Write("# BountyForge Protocol Stats\n\n")
-	res.Write(ufmt.Sprintf("- **Total Bounties:** %d\n", bounties.Size()))
-	res.Write(ufmt.Sprintf("- **Open:** %d | **Paid:** %d | **Disputed:** %d | **Cancelled:** %d\n", openCount, paidCount, disputedCount, cancelledCnt))
-	res.Write(ufmt.Sprintf("- **Total Locked Escrow:** %s (`%d ugnot`)\n", escrowmath.FormatGNOT(totalEscrowed), totalEscrowed))
-	res.Write(ufmt.Sprintf("- **Cumulative Paid Out:** %s (`%d ugnot`)\n", escrowmath.FormatGNOT(totalPaidOut), totalPaidOut))
-	res.Write(ufmt.Sprintf("- **Verified Builders:** %d\n", builders.Size()))
-	res.Write(ufmt.Sprintf("- **Current Block Height:** #%d\n\n", runtime.ChainHeight()))
-	res.Write("[Back to Board](:) · [Leaderboard](:leaderboard)\n")
-}
-
-func betterProfile(a, b *BuilderProfile) bool {
-	if a.XP != b.XP {
-		return a.XP > b.XP
-	}
-	if a.TotalEarned != b.TotalEarned {
-		return a.TotalEarned > b.TotalEarned
-	}
-	return a.Address.String() < b.Address.String()
-}
-
-func nextTierTarget(xp int64) int64 {
-	switch {
-	case xp < 100:
-		return 100
-	case xp < 300:
-		return 300
-	case xp < 800:
-		return 800
-	case xp < 2000:
-		return 2000
-	case xp < 5000:
-		return 5000
-	default:
-		return xp
-	}
-}
-
-func shortAddr(a address) string {
-	s := a.String()
-	if len(s) <= 14 {
-		return s
-	}
-	return s[:8] + "..." + s[len(s)-4:]
+	chain.Emit(
+		"DisputeExpired",
+		"id", strconv.FormatUint(bounty.ID, 10),
+		"triggered_by", caller.String(),
+		"refund_ugnot", strconv.FormatInt(refundTotal, 10),
+	)
 }

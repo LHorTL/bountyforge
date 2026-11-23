@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BountyForge — Trustless Micro-Bounty Escrow &amp; Split Studio on Gno.land</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="bg-glow" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">BF</div>
+      <div>
+        <div class="brand-title">BountyForge <span class="badge-tag">onyx-1</span></div>
+        <div class="brand-sub">Gno.land Micro-Bounty Escrow · Zero-Dust Splits · Builder XP</div>
+      </div>
+    </div>
+
+    <div class="topbar-actions">
+      <div id="networkPill" class="status-pill status-loading" title="Live onyx-1 RPC status">
+        <span class="dot"></span>
+        <span id="networkText">Connecting to onyx-1...</span>
+      </div>
+      <button id="btnConfig" class="btn btn-ghost" type="button" title="Configure RPC & Realm">RPC</button>
+      <button id="btnConnectAdena" class="btn btn-primary" type="button">Connect Adena</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Live Status Banner (auto-explains inert queue vs active realm cleanly) -->
+    <section id="statusBanner" class="banner hidden" role="status"></section>
+
+    <!-- KPI Grid -->
+    <section class="kpi-grid" aria-label="Protocol Metrics">
+      <article class="kpi-card">
+        <div class="kpi-label">Locked Escrow</div>
+        <div id="kpiEscrowed" class="kpi-value">—</div>
+        <div id="kpiOpenCount" class="kpi-meta">Loading...</div>
+      </article>
+      <article class="kpi-card">
+        <div class="kpi-label">Cumulative Paid Out</div>
+        <div id="kpiPaid" class="kpi-value accent-cyan">—</div>
+        <div id="kpiPaidCount" class="kpi-meta">—</div>
+      </article>
+      <article class="kpi-card">
+        <div class="kpi-label">Verified Builders</div>
+        <div id="kpiBuilders" class="kpi-value accent-gold">—</div>
+        <div class="kpi-meta">On-chain SVG credentials</div>
+      </article>
+      <article class="kpi-card">
+        <div class="kpi-label">Security Model</div>
+        <div class="kpi-value accent-green">100% Pro-Rata</div>
+        <div class="kpi-meta">Zero sponsor rug · 128-bit safe</div>
+      </article>
+    </section>
+
+    <!-- Navigation Tabs & Primary CTA -->
+    <nav class="nav-row" aria-label="Workspace Sections">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="board" role="tab" aria-selected="true">Bounty Board</button>
+        <button class="tab" data-tab="split" role="tab" aria-selected="false">Split Studio</button>
+        <button class="tab" data-tab="leaderboard" role="tab" aria-selected="false">Builder Leaderboard</button>
+        <button class="tab" data-tab="gnoweb" role="tab" aria-selected="false">gnoweb / MCP</button>
+      </div>
+      <div class="nav-cta">
+        <button id="btnOpenCreate" class="btn btn-gold" type="button">+ Fund New Bounty</button>
+      </div>
+    </nav>
+
+    <!-- TAB 1: BOUNTY BOARD -->
+    <section id="tab-board" class="tab-panel active">
+      <div class="filter-bar">
+        <div class="filter-pills" id="statusFilters">
+          <button class="pill active" data-status="">All</button>
+          <button class="pill" data-status="OPEN">Open</button>
+          <button class="pill" data-status="PAID">Paid</button>
+          <button class="pill" data-status="DISPUTED">Disputed</button>
+          <button class="pill" data-status="CANCELLED">Cancelled</button>
+        </div>
+        <input id="searchInput" class="search-input" type="search" placeholder="Search title, tag, or g1 address..." />
+      </div>
+
+      <div id="bountyGrid" class="bounty-grid"></div>
+    </section>
+
+    <!-- TAB 2: INTERACTIVE MULTI-CONTRIBUTOR SPLIT STUDIO -->
+    <section id="tab-split" class="tab-panel">
+      <div class="panel-card">
+        <div class="panel-header">
+          <div>
+            <h2>Zero-Dust Basis-Point Split Studio</h2>
+            <p class="muted">Drag contributor sliders to split any escrowed pool across builders. Exact BigInt math mirrors <code>p/escrowmath.SplitBasisPoints</code> (always sums to 10,000 BPS, zero dust lost, rejects 0-ugnot shares).</p>
+          </div>
+          <div class="split-controls-top">
+            <label class="inline-field">
+              <span>Bounty ID</span>
+              <input id="studioBountyId" type="number" min="1" value="1" />
+            </label>
+            <label class="inline-field">
+              <span>Reward Pool (ugnot)</span>
+              <input id="studioTotalUgnot" type="number" min="1000" step="1000" value="6500003" />
+            </label>
+            <button id="btnAddContributor" class="btn btn-ghost" type="button">+ Add Recipient</button>
+          </div>
+        </div>
+
+        <div id="splitBarVisual" class="split-bar-visual"></div>
+        <div id="splitError" class="alert alert-danger hidden"></div>
+        <div id="splitRows" class="split-rows"></div>
+
+        <div class="split-footer">
+          <div class="split-summary">
+            <span>Total Weight: <strong id="studioBpsTotal">10000</strong> / 10000 BPS</span>
+            <span>Conservation Dust: <strong id="studioDust">0 ugnot</strong></span>
+          </div>
+          <div class="btn-group">
+            <button id="btnStudioEqual" class="btn btn-ghost" type="button">Equal Split</button>
+            <button id="btnStudioCopyCmd" class="btn btn-ghost" type="button">Copy gnokey CLI</button>
+            <button id="btnStudioSign" class="btn btn-primary" type="button">Sign SplitAndPay (Adena)</button>
+          </div>
+        </div>
+
+        <pre id="studioCmdPreview" class="code-box"></pre>
+      </div>
+    </section>
+
+    <!-- TAB 3: LEADERBOARD & ON-CHAIN SVG CREDENTIALS -->
+    <section id="tab-leaderboard" class="tab-panel">
+      <div class="split-layout">
+        <div class="panel-card">
+          <div class="panel-header">
+            <div>
+              <h2>On-Chain Builder Leaderboard</h2>
+              <p class="muted">O(log N) AVL-indexed by XP, Total Earned, and Address — value-weighted XP resists micro-bounty wash-farming.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Builder</th>
+                  <th>Tier</th>
+                  <th>XP</th>
+                  <th>Quests</th>
+                  <th>Unique Creators</th>
+                  <th>Earned</th>
+                </tr>
+              </thead>
+              <tbody id="leaderboardBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel-card">
+          <h2>On-Chain SVG Builder Credential</h2>
+          <p class="muted">Click any builder row to preview their deterministic <code>p/nt/svg/v0</code> credential rendered natively inside <code>gnoweb</code>.</p>
+          <div id="svgCredentialPreview" class="svg-preview"></div>
+          <div id="selectedBuilderMeta" class="meta-kv"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: GNOWEB & AI-AGENT MCP COMPANION -->
+    <section id="tab-gnoweb" class="tab-panel">
+      <div class="two-col">
+        <div class="panel-card">
+          <h2>Live gnoweb Realm &amp; Onyx Verification</h2>
+          <p class="muted">Inspect deployed realm paths on <code>onyx-1</code> directly via Tendermint ABCI RPC.</p>
+          <div class="meta-kv" id="realmEndpoints"></div>
+          <div class="btn-group" style="margin-top: 14px;">
+            <button id="btnRefreshRpc" class="btn btn-primary" type="button">Re-Query onyx-1 RPC</button>
+            <a id="gnowebExternalLink" class="btn btn-ghost" target="_blank" rel="noopener noreferrer">Open on gnoweb</a>
+          </div>
+          <h3 style="margin-top: 20px;">Raw <code>vm/qrender</code> Output</h3>
+          <pre id="rawRenderBox" class="code-box code-tall">Querying onyx-1...</pre>
+        </div>
+
+        <div class="panel-card">
+          <h2>AI-Agent MCP Integration</h2>
+          <p class="muted">Zero-dependency Node.js MCP server (<code>mcp/bountyforge-mcp.mjs</code>) exposes 8 tools for Claude, Gemini, and Cursor agents — zero private keys stored.</p>
+          <ul class="feature-list">
+            <li><code>bountyforge_protocol_stats</code> — Typed <code>ProtocolJSON()</code> metrics</li>
+            <li><code>bountyforge_list_bounties</code> — Paginated status-indexed board</li>
+            <li><code>bountyforge_get_bounty</code> — Full sponsor ledger + submissions</li>
+            <li><code>bountyforge_leaderboard</code> — O(pageSize) AVL rankings</li>
+            <li><code>bountyforge_simulate_split</code> — BigInt zero-dust BPS check</li>
+            <li><code>bountyforge_build_tx</code> — Shell-safe unsigned <code>gnokey</code> commands</li>
+          </ul>
+          <h3>Claude Desktop / Cursor <code>mcp.json</code></h3>
+          <pre id="mcpConfigBox" class="code-box"></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- BOUNTY DETAIL MODAL -->
+  <div id="detailModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <div>
+          <div id="detailBadges" class="badge-row"></div>
+          <h2 id="detailTitle">Bounty #—</h2>
+        </div>
+        <button class="icon-btn" data-close="detailModal" aria-label="Close">&times;</button>
+      </div>
+      <div id="detailBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- CREATE BOUNTY MODAL -->
+  <div id="createModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="createTitle">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="createTitle">Fund New Micro-Bounty Escrow</h2>
+        <button class="icon-btn" data-close="createModal" aria-label="Close">&times;</button>
+      </div>
+      <form id="createForm" class="modal-body form-stack">
+        <label>
+          <span>Title *</span>
+          <input name="title" type="text" maxlength="120" required placeholder="e.g. Build GRC20 Fee Splitter Package" />
+        </label>
+        <label>
+          <span>Specification &amp; Acceptance Criteria *</span>
+          <textarea name="summary" rows="4" maxlength="1000" required placeholder="Describe deliverables, test expectations, and PR target..."></textarea>
+        </label>
+        <div class="form-row">
+          <label>
+            <span>Reward (GNOT) *</span>
+            <input name="rewardGnot" type="number" step="0.001" min="0.001" value="5" required />
+          </label>
+          <label>
+            <span>Deadline (blocks, 0 = none)</span>
+            <input name="deadlineBlocks" type="number" min="0" value="20000" />
+          </label>
+        </div>
+        <div class="form-row">
+          <label>
+            <span>Tags (comma-separated)</span>
+            <input name="tags" type="text" maxlength="120" value="gno,security" />
+          </label>
+          <label>
+            <span>Optional Dispute Arbiter (g1...)</span>
+            <input name="arbiter" type="text" placeholder="g1..." />
+          </label>
+        </div>
+        <div id="createCmdBox" class="code-box small"></div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="btnCopyCreateCmd">Copy gnokey CLI</button>
+          <button type="submit" class="btn btn-gold">Sign CreateBounty</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- RPC SETTINGS MODAL -->
+  <div id="configModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="configTitle">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="configTitle">Network &amp; Realm Settings</h2>
+        <button class="icon-btn" data-close="configModal" aria-label="Close">&times;</button>
+      </div>
+      <form id="configForm" class="modal-body form-stack">
+        <label>
+          <span>Gno Tendermint RPC URL</span>
+          <input id="cfgRpc" type="url" required />
+        </label>
+        <label>
+          <span>Chain ID</span>
+          <input id="cfgChainId" type="text" required />
+        </label>
+        <label>
+          <span>BountyForge Realm Path</span>
+          <input id="cfgRealm" type="text" required />
+        </label>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" data-close="configModal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save &amp; Reconnect</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toastRoot" class="toast-root" aria-live="polite"></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
