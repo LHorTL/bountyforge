@@ -47,6 +47,24 @@ gno test -v ./...
 node mcp/bountyforge-mcp.mjs --self-test
 ```
 
+## Live Onyx Testnet (`onyx-1`) Deployment
+
+Deployed with `gnokey v1.8.0` to **`onyx-1`** (`https://rpc.onyx.testnets.gno.land:443`) from address `g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac`:
+
+| Component | Package / Realm Path | Block | Tx Hash | Status |
+| :--- | :--- | :---: | :--- | :--- |
+| Pure Package | `gno.land/p/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/escrowmath` | `#1341832` | `GycoNsIOajz8zRcTUYhh4UQNtKasBwI2+naB03zGrfg=` | On-chain (`onyx-1` `inert` queue awaiting `MsgEnablePackage`) |
+| Escrow Realm | `gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge` | `#1341833` | `KtU/3nx+EDK6VEFICgsjSiDv9R88dzvNA6CLMwO8+Fs=` | On-chain (`onyx-1` `inert` queue awaiting `MsgEnablePackage`) |
+
+Verify live on-chain registration:
+```bash
+gnokey query vm/qinertpaths -data "gno.land/p/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac" -remote https://rpc.onyx.testnets.gno.land:443
+gnokey query vm/qinertpaths -data "gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac" -remote https://rpc.onyx.testnets.gno.land:443
+```
+
+Once enabled by a Gno.land `pkg_approvers` member, the realm renders directly on `gnoweb`:
+- https://onyx.testnets.gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge
+
 ## Deploying to Gno.land Onyx Testnet (`onyx-1`)
 
 1. Fund your `onyx-dev` address via [faucet.gno.land](https://faucet.gno.land/).

@@ -16,8 +16,9 @@ Write-Host "`n== Step 1/2: Deploying pure package gno.land/p/$Address/escrowmath
 & $GnokeyBin maketx addpkg `
     -pkgpath "gno.land/p/$Address/escrowmath" `
     -pkgdir (Join-Path $RepoRoot "p\escrowmath") `
-    -gas-fee "1000000ugnot" `
-    -gas-wanted "10000000" `
+    -gas-fee "2000000ugnot" `
+    -gas-wanted "25000000" `
+    -max-deposit "15000000ugnot" `
     -chainid $ChainId `
     -remote $Remote `
     -broadcast `
@@ -27,8 +28,9 @@ Write-Host "`n== Step 2/2: Deploying realm gno.land/r/$Address/bountyforge ==" -
 & $GnokeyBin maketx addpkg `
     -pkgpath "gno.land/r/$Address/bountyforge" `
     -pkgdir (Join-Path $RepoRoot "r\bountyforge") `
-    -gas-fee "1000000ugnot" `
-    -gas-wanted "15000000" `
+    -gas-fee "4000000ugnot" `
+    -gas-wanted "60000000" `
+    -max-deposit "25000000ugnot" `
     -chainid $ChainId `
     -remote $Remote `
     -broadcast `
