@@ -7,14 +7,13 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <div class="bg-glow" aria-hidden="true"></div>
-
+  <div class="app-shell">
   <header class="topbar">
     <div class="brand">
-      <div class="brand-mark" aria-hidden="true">BF</div>
+      <div class="brand-accent-bar" aria-hidden="true"></div>
       <div>
-        <div class="brand-title">BountyForge <span class="badge-tag">onyx-1</span></div>
-        <div class="brand-sub">Gno.land Micro-Bounty Escrow · Zero-Dust Splits · Builder XP</div>
+        <h1 class="brand-title">BountyForge <span class="badge-tag">onyx-1</span></h1>
+        <p class="brand-sub">Gno.land Micro-Bounty Escrow · Zero-Dust Splits · Builder XP</p>
       </div>
     </div>
 
@@ -28,7 +27,7 @@
     </div>
   </header>
 
-  <main class="container">
+  <main>
     <!-- Live Status Banner (auto-explains inert queue vs active realm cleanly) -->
     <section id="statusBanner" class="banner hidden" role="status"></section>
 
@@ -195,6 +194,7 @@
       </div>
     </section>
   </main>
+  </div>
 
   <!-- BOUNTY DETAIL MODAL -->
   <div id="detailModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="detailTitle">

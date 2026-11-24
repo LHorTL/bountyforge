@@ -12,7 +12,7 @@ export const DEFAULT_CONFIG = {
   pkg: "gno.land/p/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/escrowmath",
 };
 
-const PALETTE = ["#06B6D4", "#A855F7", "#10B981", "#F59E0B", "#3B82F6", "#EC4899"];
+const PALETTE = ["#4338CA", "#0F766E", "#0284C7", "#92400E", "#6D28D9", "#BE123C"];
 const TOTAL_BPS = 10000n;
 
 // ---------------------------------------------------------------------------
@@ -64,12 +64,12 @@ export function shortAddr(addr) {
 
 export function tierForXp(xp) {
   const n = Number(xp || 0);
-  if (n >= 5000) return { tier: "Grandmaster", badge: "[GM]", color: "#F59E0B", next: n };
-  if (n >= 2000) return { tier: "Master", badge: "[M]", color: "#A855F7", next: 5000 };
-  if (n >= 800) return { tier: "Artisan", badge: "[A]", color: "#3B82F6", next: 2000 };
-  if (n >= 300) return { tier: "Journeyman", badge: "[J]", color: "#10B981", next: 800 };
-  if (n >= 100) return { tier: "Apprentice", badge: "[AP]", color: "#06B6D4", next: 300 };
-  return { tier: "Novice", badge: "[N]", color: "#64748B", next: 100 };
+  if (n >= 5000) return { tier: "Grandmaster", badge: "[GM]", color: "#92400E", next: n };
+  if (n >= 2000) return { tier: "Master", badge: "[M]", color: "#6D28D9", next: 5000 };
+  if (n >= 800) return { tier: "Artisan", badge: "[A]", color: "#4338CA", next: 2000 };
+  if (n >= 300) return { tier: "Journeyman", badge: "[J]", color: "#047857", next: 800 };
+  if (n >= 100) return { tier: "Apprentice", badge: "[AP]", color: "#0369A1", next: 300 };
+  return { tier: "Novice", badge: "[N]", color: "#52525B", next: 100 };
 }
 
 /**
@@ -156,23 +156,23 @@ export function buildGnokeyCli({ rpc, chainId, realm, func, args = [], send = ""
 
 export function buildBuilderCredentialSvg(prof) {
   const t = tierForXp(prof.xp);
-  const barMax = 380;
+  const barMax = 392;
   let barFill = prof.xp === 0 ? 0 : barMax;
   if (t.next > 0 && prof.xp < t.next) {
     barFill = Math.max(6, Math.floor((prof.xp * barMax) / t.next));
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 170" width="460" height="170">
-    <style>text{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}</style>
-    <rect x="2" y="2" width="456" height="166" rx="14" ry="14" fill="#0F172A" stroke="${t.color}" stroke-width="2"/>
-    <rect x="2" y="2" width="10" height="166" rx="6" ry="6" fill="${t.color}"/>
-    <text x="28" y="34" fill="#94A3B8" font-size="11" font-weight="700" letter-spacing="1">BOUNTYFORGE ON-CHAIN BUILDER CREDENTIAL</text>
-    <rect x="316" y="16" width="126" height="26" rx="13" ry="13" fill="${t.color}"/>
-    <text x="330" y="33" fill="#0F172A" font-size="12" font-weight="700">${escapeHtml(t.badge + " " + t.tier)}</text>
-    <text x="28" y="66" fill="#F8FAFC" font-size="20" font-weight="700">${escapeHtml(shortAddr(prof.address))}</text>
-    <text x="28" y="98" fill="#CBD5E1" font-size="13">XP: ${Number(prof.xp)}  |  Quests: ${Number(prof.completed)}  |  ${escapeHtml(formatGnot(prof.total_earned_ugnot))}</text>
-    <rect x="28" y="114" width="${barMax}" height="14" rx="7" ry="7" fill="#1E293B"/>
-    ${barFill > 0 ? `<rect x="28" y="114" width="${barFill}" height="14" rx="7" ry="7" fill="${t.color}"/>` : ""}
-    <text x="28" y="150" fill="#64748B" font-size="11">Unique Creators: ${Number(prof.unique_creators || 0)}  ·  Verified on Gno.land</text>
+    <style>text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}</style>
+    <rect x="1" y="1" width="458" height="168" rx="6" ry="6" fill="#FFFFFF" stroke="#E6E8EC" stroke-width="1.5"/>
+    <rect x="1" y="1" width="5" height="168" rx="2" ry="2" fill="${t.color}"/>
+    <text x="24" y="33" fill="#52525B" font-size="10.5" font-weight="700" letter-spacing="0.8">BOUNTYFORGE ON-CHAIN BUILDER CREDENTIAL</text>
+    <rect x="316" y="17" width="124" height="24" rx="4" ry="4" fill="#F7F8FA" stroke="${t.color}" stroke-width="1"/>
+    <text x="328" y="33" fill="${t.color}" font-size="11.5" font-weight="700">${escapeHtml(t.badge + " " + t.tier)}</text>
+    <text x="24" y="68" fill="#18181B" font-size="19" font-weight="700">${escapeHtml(shortAddr(prof.address))}</text>
+    <text x="24" y="96" fill="#52525B" font-size="12.5">XP: ${Number(prof.xp)}  |  Quests: ${Number(prof.completed)}  |  ${escapeHtml(formatGnot(prof.total_earned_ugnot))}</text>
+    <rect x="24" y="114" width="${barMax}" height="10" rx="4" ry="4" fill="#F0F1F4"/>
+    ${barFill > 0 ? `<rect x="24" y="114" width="${barFill}" height="10" rx="4" ry="4" fill="${t.color}"/>` : ""}
+    <text x="24" y="148" fill="#52525B" font-size="11">Unique Creators: ${Number(prof.unique_creators || 0)}  ·  Verified on Gno.land</text>
   </svg>`;
 }
 
@@ -645,7 +645,7 @@ if (typeof document !== "undefined") {
           .map((s) => {
             const href = safeHttpUrl(s.proof_url);
             const proofLink = href
-              ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" style="color:var(--cyan)">Deliverable</a>`
+              ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">Deliverable</a>`
               : `<span class="muted">Invalid URL</span>`;
             const sessionTag = s.via_session ? ` <span class="tag">agent-session</span>` : "";
             const actBtn =
@@ -668,16 +668,16 @@ if (typeof document !== "undefined") {
     const payoutHtml = payouts.length
       ? `<div class="detail-section">
           <h3>On-Chain Settlement</h3>
-          <table class="data-table"><thead><tr><th>Recipient</th><th>Share</th><th>Amount</th></tr></thead>
+          <div class="table-wrap"><table class="data-table"><thead><tr><th>Recipient</th><th>Share</th><th>Amount</th></tr></thead>
           <tbody>${payouts
             .map(
               (p) => `<tr>
                 <td class="mono">${escapeHtml(shortAddr(p.recipient))}</td>
                 <td class="mono">${escapeHtml(formatBps(p.bps))}</td>
-                <td class="mono" style="color:var(--gold)">${escapeHtml(formatGnot(p.amount_ugnot))}</td>
+                <td class="mono text-accent">${escapeHtml(formatGnot(p.amount_ugnot))}</td>
               </tr>`
             )
-            .join("")}</tbody></table>
+            .join("")}</tbody></table></div>
         </div>`
       : "";
 
@@ -707,7 +707,7 @@ if (typeof document !== "undefined") {
       ${b.dispute_reason ? `<div class="alert alert-danger" style="margin-top:14px"><strong>Dispute Notice:</strong> ${escapeHtml(b.dispute_reason)}</div>` : ""}
       <div class="detail-section">
         <h3>Crowdfund Escrow Ledger (${contribs.length}) — Pro-Rata Protected</h3>
-        <table class="data-table"><thead><tr><th>Role</th><th>Sponsor</th><th>Deposited</th></tr></thead><tbody>${contribRows}</tbody></table>
+        <div class="table-wrap"><table class="data-table"><thead><tr><th>Role</th><th>Sponsor</th><th>Deposited</th></tr></thead><tbody>${contribRows}</tbody></table></div>
       </div>
       <div class="detail-section">
         <h3>Submissions (${subs.length})</h3>
@@ -933,7 +933,7 @@ if (typeof document !== "undefined") {
           <td class="mono">${Number(p.xp)}</td>
           <td class="mono">${Number(p.completed)}</td>
           <td class="mono">${Number(p.unique_creators || 0)}</td>
-          <td class="mono" style="color:var(--gold)">${escapeHtml(formatGnot(p.total_earned_ugnot))}</td>
+          <td class="mono text-accent">${escapeHtml(formatGnot(p.total_earned_ugnot))}</td>
         </tr>`;
       })
       .join("");
