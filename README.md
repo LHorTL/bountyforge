@@ -131,43 +131,56 @@ Add BountyForge to Claude Desktop, Cursor, or Gemini MCP settings:
 
 ---
 
-## Onyx Testnet (`onyx-1`) Deployment
+## Onyx Testnet (`onyx-1`) Live Deployment & On-Chain Seeded Activity
 
-Hardened **v2.0** deployed via same-submitter replacement with `gnokey v1.8.0` to **`onyx-1`** (`https://rpc.onyx.testnets.gno.land:443`) from `g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac`:
+Hardened **v2.0** is **LIVE & ENABLED** on **`onyx-1`** (`https://rpc.onyx.testnets.gno.land:443`) from `g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac` — both packages passed **GPAS** (`passed`, `0/2` inert) and serve live `vm/qrender`, `vm/qeval`, Adena Web dApp (`https://lhortl.github.io/bountyforge/`), and 8-tool MCP reads directly from `onyx-1`.
+
+### 1. Deployed Package & Realm (`onyx-1`)
 
 | Component | Package / Realm Path | v2.0 Block | v2.0 TX Hash | Gas Used | Status |
 | :--- | :--- | :---: | :--- | :---: | :--- |
-| Pure Package | `gno.land/p/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/escrowmath` | `#1343058` | `Q5vKAjvPz1YE+fP3BuRCyUHJ3I88EuMQL6yn8WJX9fE=` | `23,586,535` | On-chain (`onyx-1` `inert` queue awaiting `MsgEnablePackage`) |
-| Escrow Realm | `gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge` | `#1343070` | `ZIPCxc57AfYBbfQR+C21MiCqPfnTflqeboCpNqhdyLo=` | `123,378,871` | On-chain (`onyx-1` `inert` queue awaiting `MsgEnablePackage`) |
+| Pure Package | `gno.land/p/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/escrowmath` | `#1343058` | `Q5vKAjvPz1YE+fP3BuRCyUHJ3I88EuMQL6yn8WJX9fE=` | `23,586,535` | **LIVE & ENABLED** (`onyx-1`) |
+| Escrow Realm | `gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge` | `#1343070` | `ZIPCxc57AfYBbfQR+C21MiCqPfnTflqeboCpNqhdyLo=` | `123,378,871` | **LIVE & ENABLED** (`onyx-1`, `vm/qrender` + `vm/qeval` active) |
 
 *(Initial v1.0 submissions were at blocks `#1341832` / `#1341833`, superseded on-chain by the verified v2.0 replacements above.)*
 
-Verify live on-chain registration & GPAS approval metadata:
+### 2. Verified Live On-Chain Bounties, Settlement & SVG Builder Credential (`onyx-1`)
+
+To let judges inspect both active escrows and a complete end-to-end payout + on-chain SVG Builder Credential (`p/nt/svg/v0`) directly on `onyx-1`, **3 real bounties** (`5.5 GNOT` total volume: `3.5 GNOT` currently escrowed across 2 open bounties + `2 GNOT` settled on-chain to builder `g1gutp6n8tllmll35w8gerze4d0lfgm5l8f88x0v`) were executed live on-chain:
+
+| Action | Bounty / Details | Block | TX Hash | Gas Used | Live State |
+| :--- | :--- | :---: | :--- | :---: | :--- |
+| `CreateBounty` (#1) | *Build Onyx-1 ABCI Event Indexer & MCP Bridge* (`2 GNOT`) | `#1385748` | `X0Evg7uNlFVWM4/2Gz59uY3wDtT4c2YJJMGj44LS2aI=` | `12,566,073` | Created |
+| `SubmitWork` (#1) | Builder `g1gutp6n8tllmll35w8gerze4d0lfgm5l8f88x0v` proof submission | `#1385765` | `mSURVcAioVU2r+4XpD1zefemthDIWuBMYA5pMTB4gxE=` | `12,302,407` | Submitted |
+| `ApproveAndPay` (#1) | Released `2 GNOT` (`2,000,000 ugnot`), credited `60 XP`, minted SVG badge | `#1385767` | `ysdPnhrsBS9HL1Q6TKDTenAECM5ScS9oo1SNBOmWqvQ=` | `12,681,473` | **`PAID`** |
+| `CreateBounty` (#2) | *Add Gno v1.8.0 Scoped Session-Key Agent CLI Support* (`2 GNOT`) | `#1385769` | `d+mdjuX9mpUB5rKtq3FVMKoaicqDfSyynbYEO4C8snU=` | `12,604,500` | **`OPEN`** |
+| `CreateBounty` (#3) | *Security Audit: Canonical Banker & 128-bit Pro-Rata Refund Invariants* (`1.5 GNOT`, arbiter-protected) | `#1385771` | `7fuMOKjj0cnqSddwFLYy8P4hjr/zpFzevpShm8ZppnE=` | `13,948,848` | **`OPEN`** |
+
+Verify live on-chain state directly via `gnokey` / ABCI RPC:
 ```bash
-gnokey query vm/qinertpaths -data "gno.land/p/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac" -remote https://rpc.onyx.testnets.gno.land:443
-gnokey query vm/qinertpaths -data "gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac" -remote https://rpc.onyx.testnets.gno.land:443
-gnokey query vm/qpkgmeta_json -data "gno.land/p/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/escrowmath" -remote https://rpc.onyx.testnets.gno.land:443
-gnokey query vm/qpkgmeta_json -data "gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge" -remote https://rpc.onyx.testnets.gno.land:443
+gnokey query vm/qeval -data "gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge.ProtocolJSON()" -remote https://rpc.onyx.testnets.gno.land:443
+gnokey query vm/qeval -data 'gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge.ListBountiesJSON("", 1, 10)' -remote https://rpc.onyx.testnets.gno.land:443
+gnokey query vm/qrender -data "gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge:" -remote https://rpc.onyx.testnets.gno.land:443
+gnokey query vm/qrender -data "gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge:builder/g1gutp6n8tllmll35w8gerze4d0lfgm5l8f88x0v" -remote https://rpc.onyx.testnets.gno.land:443
 ```
 
-### Onyx `inert` Policy, GPAS Status & Public Testnet Availability
+### Live `gnoweb` Routes & Public Testnet Availability
 
-- **`onyx-1` GPAS Enablement (`code_submission_policy = "inert"`)**: `onyx-1` mirrors mainnet's `inert` deployment policy (7 funded `vm:p:pkg_approvers` accounts managed by the **GPAS** oracle at [gpas.onyx.testnets.gno.land](https://gpas.onyx.testnets.gno.land/)). Both BountyForge v2.0 paths pass syntax/type checks (zero compile errors) and show **`in review queue`** on GPAS alongside other Gnome Tavern hackathon realms. Per official Gno.land docs (`docs/builders/quickstart.md`), there is no GitHub PR approval workflow — packages enable automatically via GPAS (`automatic` mode) or via operator follow-up in [Gno.land Discord](https://discord.com/invite/gnoland).
-- **Public Testnet Audit (`docs.gno.land/resources/gnoland-networks/`)**: `onyx-1` (`https://rpc.onyx.testnets.gno.land:443`, alias `rpc.latest.testnets.gno.land`) is currently the **only live official public Gno.land testnet** (`staging` has been down since `2026-07-10` returning HTTP 503; `pearl-1` / Test16, `gnoland1` Betanet, `portal-loop`, and `test5`/`test11`/`test12` are retired; mainnet `gnoland-1` has no faucet and uses manual GPAS review at `gpas.gno.land`).
-- **Instant Live `gnoweb` Evaluation (`gnodev local`)**: Judges can inspect every rendered `<gno-button>`, `<gno-form>`, on-chain SVG payout chart, and SVG Builder Credential locally in seconds with Gno `v1.8.0`:
+- **Live `onyx-1` `gnoweb` Endpoints**:
+  - Board: `https://onyx.testnets.gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge`
+  - Create Form: `https://onyx.testnets.gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge:new`
+  - Settled Bounty (`PAID`): `https://onyx.testnets.gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge:bounty/1`
+  - Open Bounties: `...:bounty/2` · `...:bounty/3` (arbiter-protected)
+  - Live On-Chain SVG Builder Credential: `https://onyx.testnets.gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge:builder/g1gutp6n8tllmll35w8gerze4d0lfgm5l8f88x0v`
+  - Leaderboard: `https://onyx.testnets.gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge:leaderboard`
+  - Protocol Stats: `https://onyx.testnets.gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge:stats`
+- **Live Adena Web dApp (`https://lhortl.github.io/bountyforge/`)**: Automatically queries `onyx-1` ABCI RPC in live mode (`3` bounties, `3.5 GNOT` escrowed, `2 GNOT` paid, live SVG credential & Split Studio).
+- **Local `gnodev local` Evaluation (Optional)**: Judges can also spin up an isolated local `gnodev` instance in seconds with Gno `v1.8.0`:
   ```bash
   gnodev local -deploy-key g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac \
     -add-account g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac=100000000000ugnot
   # Open http://127.0.0.1:8888/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge
   ```
-
-Once GPAS enables the realm on `onyx-1`, browse directly on public `gnoweb`:
-- Board: `https://onyx.testnets.gno.land/r/g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac/bountyforge`
-- Create Form: `...:new`
-- Bounty Detail: `...:bounty/1`
-- Builder Credential: `...:builder/<g1_addr>`
-- Leaderboard: `...:leaderboard`
-- Protocol Stats: `...:stats`
 
 ### Deploying with `deploy.ps1`
 
