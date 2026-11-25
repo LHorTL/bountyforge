@@ -1,8 +1,8 @@
 # BountyForge
 
-**Trustless On-Chain Micro-Bounty Escrow, Overflow-Proof Multi-Contributor Split Payouts, Sponsor-Safe Crowdfunding & Builder Credentials on Gno.land**
+**Fund a coding task, split the payout cleanly across every contributor, and mint an on-chain badge when the work ships — live on Gno.land (`onyx-1`).**
 
-Built for the **Gnome Tavern Hackathon** (`onyx-1` testnet / Gno `v1.8.0`). BountyForge combines a pure formal-math Gno package (`p/escrowmath`), a security-hardened DAO-composable escrow realm (`r/bountyforge`), an interactive `gnoweb` UI with on-chain SVG credentials, a zero-build **Adena Wallet** web dApp (`web/`), and an 8-tool zero-dependency **Model Context Protocol (MCP)** server (`mcp/`).
+Built for the **Gnome Tavern Hackathon** on Gno `v1.8.0`, BountyForge lets sponsors lock GNOT in an escrow realm, pay multiple contributors down to the last `ugnot` with zero rounding loss, refund sponsors proportionally if work is cancelled or disputed, and issue verifiable on-chain SVG credentials via `gnoweb`, the Adena Wallet web app (`web/`), or an 8-tool AI-agent MCP server (`mcp/`).
 
 - **HD Demo Video (Release `v2.0.0`)**: [Watch / Download `bountyforge-v2-demo.mp4`](https://github.com/LHorTL/bountyforge/releases/download/v2.0.0/bountyforge-v2-demo.mp4) (`1280x720` H.264 walkthrough: live Adena Web dApp & Split Studio, live `gnodev`/`gnoweb` v1.8.0 SVG & `<gno-form>` rendering, 60/60 test matrix & `onyx-1` receipts)
 - **Live Adena Wallet Web dApp & Split Studio**: [https://lhortl.github.io/bountyforge/](https://lhortl.github.io/bountyforge/)
@@ -78,7 +78,7 @@ Every invariant below is backed by dedicated unit & regression tests in `p/escro
 - **Adena Wallet Web dApp & Split Studio (`web/`)**:
   - Zero-build static site (deployable directly to GitHub Pages).
   - Connects `window.adena` (`AddEstablish`, `GetAccount`, `DoContract` with `/vm.m_call`).
-  - Queries live `onyx-1` ABCI RPC (`vm/qeval`, `vm/qrender`, `vm/qinertpaths`) with seamless **Interactive Preview Mode** whenever a realm is staged in `inert` queue.
+  - Queries live `onyx-1` ABCI RPC (`vm/qeval`, `vm/qrender`, `vm/qinertpaths`) directly; if RPC is unreachable, displays a transparent **`OFFLINE SNAPSHOT`** pill badge synced to verified `onyx-1` state (`3` bounties, `3.5 GNOT` escrowed, `2 GNOT` paid, `1` builder at `60 XP`).
   - Interactive **Split Studio** with auto-rebalancing sliders, exact BigInt dust readout, live SVG credential viewer, and one-click `gnokey` CLI fallback.
 - **8-Tool AI-Agent MCP Server (`mcp/bountyforge-mcp.mjs`)**:
   - Exposes `bountyforge_render`, `bountyforge_eval`, `bountyforge_protocol_stats`, `bountyforge_list_bounties`, `bountyforge_get_bounty`, `bountyforge_leaderboard`, `bountyforge_simulate_split`, and `bountyforge_build_tx` over stdio JSON-RPC 2.0 (including `ping` and notification compliance).

@@ -14,6 +14,7 @@ import {
   buildBuilderCredentialSvg,
   buildGnokeyCli,
   computeZeroDustSplit,
+  createOfflineSnapshotState,
   escapeHtml,
   formatBps,
   formatGnot,
@@ -28,7 +29,7 @@ function check(name, fn) {
 }
 
 check("formatGnot & formatBps", () => {
-  assert.equal(formatGnot(6_500_000), "6.5 GNOT");
+  assert.equal(formatGnot(3_500_000), "3.5 GNOT");
   assert.equal(formatGnot(1), "0.000001 GNOT");
   assert.equal(formatGnot(0), "0 GNOT");
   assert.equal(formatBps(6667), "66.67%");
@@ -82,17 +83,44 @@ check("escapeHtml, safeHttpUrl & unwrapGnoString defenses", () => {
   assert.equal(unwrapGnoString(`("{\\"ok\\":true}" string)`), `{"ok":true}`);
 });
 
-check("buildBuilderCredentialSvg embeds safe SVG markup", () => {
-  const svg = buildBuilderCredentialSvg({
-    address: "g125em6arxsnj49vx35f0n0z34putv5ty3376fg5",
+check("buildBuilderCredentialSvg & live onyx-1 offline snapshot alignment", () => {
+  const snap = createOfflineSnapshotState();
+  assert.equal(snap.stats.total_bounties, 3);
+  assert.equal(snap.stats.open, 2);
+  assert.equal(snap.stats.paid, 1);
+  assert.equal(snap.stats.disputed, 0);
+  assert.equal(snap.stats.cancelled, 0);
+  assert.equal(snap.stats.total_escrowed_ugnot, 3_500_000);
+  assert.equal(snap.stats.total_paid_ugnot, 2_000_000);
+  assert.equal(snap.stats.builders, 1);
+  assert.equal(snap.bounties.length, 3);
+  assert.equal(snap.leaderboard.length, 1);
+  assert.equal(snap.leaderboard[0].address, "g1gutp6n8tllmll35w8gerze4d0lfgm5l8f88x0v");
+  assert.equal(snap.leaderboard[0].xp, 60);
+
+  const byId = Object.fromEntries(snap.bounties.map((b) => [b.id, b]));
+  assert.equal(byId[1].status, "PAID");
+  assert.equal(byId[1].reward_ugnot, 2_000_000);
+  assert.equal(byId[1].payouts[0].recipient, "g1gutp6n8tllmll35w8gerze4d0lfgm5l8f88x0v");
+  assert.equal(byId[2].status, "OPEN");
+  assert.equal(byId[2].reward_ugnot, 2_000_000);
+  assert.equal(byId[3].status, "OPEN");
+  assert.equal(byId[3].reward_ugnot, 1_500_000);
+
+  const liveSvg = buildBuilderCredentialSvg(snap.leaderboard[0]);
+  assert.ok(liveSvg.startsWith("<svg "));
+  assert.ok(liveSvg.includes("[N] Novice"));
+  assert.ok(liveSvg.includes("2 GNOT"));
+
+  const highTierSvg = buildBuilderCredentialSvg({
+    address: "g1gutp6n8tllmll35w8gerze4d0lfgm5l8f88x0v",
     xp: 920,
     completed: 5,
     unique_creators: 3,
     total_earned_ugnot: 34_800_400,
   });
-  assert.ok(svg.startsWith("<svg "));
-  assert.ok(svg.includes("[A] Artisan"));
-  assert.ok(svg.includes("34.8004 GNOT"));
+  assert.ok(highTierSvg.includes("[A] Artisan"));
+  assert.ok(highTierSvg.includes("34.8004 GNOT"));
 });
 
 console.log(`PASS: web/app.test.mjs (${passed}/${passed} test groups)`);

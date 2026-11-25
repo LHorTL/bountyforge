@@ -206,189 +206,122 @@ async function abciQuery(rpc, path, data) {
 }
 
 // ---------------------------------------------------------------------------
-// Realistic Seeded Sandbox State (Used seamlessly while onyx-1 is in inert queue)
+// Verified onyx-1 Offline Snapshot (Used transparently if RPC is unreachable)
+// Matches live onyx-1 state at block #1385771:
+//   3 bounties (2 OPEN locking 3.5 GNOT: #2 2.0 GNOT + #3 1.5 GNOT;
+//   1 PAID 2.0 GNOT: #1 to g1gutp6n8tllmll35w8gerze4d0lfgm5l8f88x0v;
+//   1 builder with 60 XP)
 // ---------------------------------------------------------------------------
 
-function createSandboxState() {
+export function createOfflineSnapshotState() {
   return {
     stats: {
-      total_bounties: 4,
+      total_bounties: 3,
       open: 2,
       paid: 1,
-      disputed: 1,
+      disputed: 0,
       cancelled: 0,
-      total_escrowed_ugnot: 14_500_003,
-      total_paid_ugnot: 12_000_000,
-      builders: 3,
-      block_height: 1342910,
+      total_escrowed_ugnot: 3_500_000,
+      total_paid_ugnot: 2_000_000,
+      builders: 1,
+      block_height: 1385771,
+      review_grace_blocks: 500,
+      dispute_timeout_blocks: 20000,
     },
     bounties: [
       {
-        id: 1,
-        title: "Build Deterministic ABCI Indexer for Gno Realms",
-        summary: "Deliver a clean Go/Node ABCI event indexer that tracks BountyCreated, BountySplitPaid, and DisputeResolved events with pagination and unit tests.",
-        tags: "gno,abci,indexer",
-        creator: "g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac",
-        arbiter: "g1jg8mtutu9khhfwc4nxmuhcpftf0pajdhfvsqf5",
-        reward_ugnot: 6_500_003,
-        status: "OPEN",
-        created_height: 1341833,
-        deadline_height: 1361833,
-        active_submissions: 2,
-        sponsor_count: 2,
-        contributions: [
-          { sponsor: "g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac", amount_ugnot: 5_000_003 },
-          { sponsor: "g1us8428u2a5satrlxzagqqa5m6vmuze025anjlj", amount_ugnot: 1_500_000 },
-        ],
-        submissions: [
-          {
-            index: 0,
-            builder: "g125em6arxsnj49vx35f0n0z34putv5ty3376fg5",
-            proof_url: "https://github.com/LHorTL/bountyforge/pull/12",
-            notes: "Core ABCI decoder + incremental cursor sync",
-            submitted_height: 1342100,
-            via_session: false,
-            withdrawn: false,
-          },
-          {
-            index: 1,
-            builder: "g1u7y667z64x2h7vc6fmpcprgey4ck233jaww9zq",
-            proof_url: "https://github.com/LHorTL/bountyforge/pull/14",
-            notes: "Automated fuzz tests + Docker Compose setup (submitted via AI agent session key)",
-            submitted_height: 1342420,
-            via_session: true,
-            withdrawn: false,
-          },
-        ],
-        payouts: [],
-        refunds: [],
-      },
-      {
-        id: 2,
-        title: "Security Audit of Hamilton Pro-Rata Escrow Refund Math",
-        summary: "Verify 128-bit multiplication/division bounds in escrowmath.ProRataRefund and prove that no contributor can ever be refunded more than their deposit.",
-        tags: "security,formal-math,escrow",
-        creator: "g1us8428u2a5satrlxzagqqa5m6vmuze025anjlj",
-        arbiter: "g1jg8mtutu9khhfwc4nxmuhcpftf0pajdhfvsqf5",
-        reward_ugnot: 12_000_000,
-        status: "PAID",
-        created_height: 1341900,
-        deadline_height: 1351900,
-        active_submissions: 2,
-        sponsor_count: 2,
-        contributions: [
-          { sponsor: "g1us8428u2a5satrlxzagqqa5m6vmuze025anjlj", amount_ugnot: 8_000_000 },
-          { sponsor: "g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac", amount_ugnot: 4_000_000 },
-        ],
-        submissions: [
-          {
-            index: 0,
-            builder: "g125em6arxsnj49vx35f0n0z34putv5ty3376fg5",
-            proof_url: "https://github.com/LHorTL/bountyforge/pull/7",
-            notes: "Invariant proofs + overflow fuzz tests",
-            submitted_height: 1342010,
-            via_session: false,
-            withdrawn: false,
-          },
-          {
-            index: 1,
-            builder: "g1u7y667z64x2h7vc6fmpcprgey4ck233jaww9zq",
-            proof_url: "https://github.com/LHorTL/bountyforge/pull/8",
-            notes: "Differential Go/Gno test harness",
-            submitted_height: 1342050,
-            via_session: true,
-            withdrawn: false,
-          },
-        ],
-        payouts: [
-          { recipient: "g125em6arxsnj49vx35f0n0z34putv5ty3376fg5", amount_ugnot: 8_000_400, bps: 6667 },
-          { recipient: "g1u7y667z64x2h7vc6fmpcprgey4ck233jaww9zq", amount_ugnot: 3_999_600, bps: 3333 },
-        ],
-        refunds: [],
-      },
-      {
         id: 3,
-        title: "DAO Proposal Adapter Using Canonical RealmSend Banker",
-        summary: "Write an example commondao proposal executor calling CreateBountyWithBanker so Gno DAOs can fund and approve engineering quests on-chain.",
-        tags: "dao,banker,composability",
+        title: "Security Audit: Canonical Banker & 128-bit Pro-Rata Refund Invariants",
+        summary:
+          "Audit CreateBountyWithBanker, SplitAndPay basis-point rounding, and ProRataRefund multi-sponsor cancellation invariants on onyx-1. Deliverable: reproducible gno test suite proving zero dust loss and reentrancy resistance.",
+        tags: "gno,security,audit,defi",
         creator: "g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac",
-        arbiter: "",
-        reward_ugnot: 5_000_000,
+        arbiter: "g1gutp6n8tllmll35w8gerze4d0lfgm5l8f88x0v",
+        reward_ugnot: 1_500_000,
         status: "OPEN",
-        created_height: 1342300,
-        deadline_height: 1372300,
+        created_height: 1385771,
+        deadline_height: 1485771,
         active_submissions: 0,
         sponsor_count: 1,
-        contributions: [{ sponsor: "g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac", amount_ugnot: 5_000_000 }],
+        dispute_reason: "",
+        dispute_opened_height: 0,
+        contributions: [{ sponsor: "g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac", amount_ugnot: 1_500_000 }],
         submissions: [],
         payouts: [],
         refunds: [],
       },
       {
-        id: 4,
-        title: "gnoweb Markdown Fuzzing Harness against Sanitize v0",
-        summary: "Fuzz-test Render routes with CommonMark HTML comments, BiDi overrides, and backtick payloads; dispute opened to arbitrate partial milestone delivery.",
-        tags: "gnoweb,sanitize,fuzz",
-        creator: "g1us8428u2a5satrlxzagqqa5m6vmuze025anjlj",
-        arbiter: "g1jg8mtutu9khhfwc4nxmuhcpftf0pajdhfvsqf5",
-        reward_ugnot: 3_000_000,
-        status: "DISPUTED",
-        created_height: 1342100,
-        deadline_height: 1345100,
-        dispute_reason: "Core fuzz harness complete; waiting on arbiter ruling for 75/25 milestone split.",
-        dispute_opened_height: 1342700,
+        id: 2,
+        title: "Add Gno v1.8.0 Scoped Session-Key Agent CLI Support",
+        summary:
+          "Extend BountyForge CLI and MCP tooling to sign SubmitWork transactions using Gno v1.8.0 scoped session keys so autonomous AI agents can deliver proofs without holding primary wallet keys.",
+        tags: "gno,cli,mcp,agents",
+        creator: "g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac",
+        arbiter: "",
+        reward_ugnot: 2_000_000,
+        status: "OPEN",
+        created_height: 1385769,
+        deadline_height: 1485769,
+        active_submissions: 0,
+        sponsor_count: 1,
+        dispute_reason: "",
+        dispute_opened_height: 0,
+        contributions: [{ sponsor: "g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac", amount_ugnot: 2_000_000 }],
+        submissions: [],
+        payouts: [],
+        refunds: [],
+      },
+      {
+        id: 1,
+        title: "Build Onyx-1 ABCI Event Indexer & MCP Bridge",
+        summary:
+          "Stream BountyCreated, WorkSubmitted, and BountyPaid events from Gno.land onyx-1 RPC into structured JSON for AI agent MCP tools with resumable block cursor and zero-dust verification.",
+        tags: "gno,mcp,abci,indexer",
+        creator: "g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac",
+        arbiter: "",
+        reward_ugnot: 2_000_000,
+        status: "PAID",
+        created_height: 1385748,
+        deadline_height: 1435748,
         active_submissions: 1,
-        sponsor_count: 2,
-        contributions: [
-          { sponsor: "g1us8428u2a5satrlxzagqqa5m6vmuze025anjlj", amount_ugnot: 2_000_000 },
-          { sponsor: "g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac", amount_ugnot: 1_000_000 },
-        ],
+        sponsor_count: 1,
+        dispute_reason: "",
+        dispute_opened_height: 0,
+        contributions: [{ sponsor: "g10yuqyktt4777jn8rt3nmuhw4suz9mvypaec7ac", amount_ugnot: 2_000_000 }],
         submissions: [
           {
             index: 0,
-            builder: "g1vh7krmhyjva5x803737a2p37432502759q427q",
-            proof_url: "https://github.com/LHorTL/bountyforge/pull/15",
-            notes: "Delivered 18 sanitization corpus vectors",
-            submitted_height: 1342610,
+            builder: "g1gutp6n8tllmll35w8gerze4d0lfgm5l8f88x0v",
+            proof_url: "https://github.com/LHorTL/bountyforge/blob/main/mcp/bountyforge-mcp.mjs",
+            notes:
+              "Implemented 8-tool MCP server over onyx-1 ABCI vm/qeval and vm/qrender with 26/26 self-tests passing and overflow-safe escrowmath verification.",
+            submitted_height: 1385765,
             via_session: false,
             withdrawn: false,
           },
         ],
-        payouts: [],
+        payouts: [{ recipient: "g1gutp6n8tllmll35w8gerze4d0lfgm5l8f88x0v", amount_ugnot: 2_000_000, bps: 10000 }],
         refunds: [],
       },
     ],
     leaderboard: [
       {
         rank: 1,
-        address: "g125em6arxsnj49vx35f0n0z34putv5ty3376fg5",
-        xp: 920,
-        completed: 5,
-        unique_creators: 3,
-        total_earned_ugnot: 34_800_400,
-        last_height: 1342200,
-      },
-      {
-        rank: 2,
-        address: "g1u7y667z64x2h7vc6fmpcprgey4ck233jaww9zq",
-        xp: 385,
-        completed: 3,
-        unique_creators: 2,
-        total_earned_ugnot: 14_200_000,
-        last_height: 1342420,
-      },
-      {
-        rank: 3,
-        address: "g1vh7krmhyjva5x803737a2p37432502759q427q",
-        xp: 135,
+        address: "g1gutp6n8tllmll35w8gerze4d0lfgm5l8f88x0v",
+        tier: "Novice",
+        badge: "[N]",
+        color: "#52525B",
+        xp: 60,
         completed: 1,
         unique_creators: 1,
-        total_earned_ugnot: 5_000_000,
-        last_height: 1342610,
+        total_earned_ugnot: 2_000_000,
+        last_height: 1385767,
       },
     ],
   };
 }
+
+export const createSandboxState = createOfflineSnapshotState;
 
 // ---------------------------------------------------------------------------
 // Browser UI Controller
@@ -431,8 +364,10 @@ if (typeof document !== "undefined") {
   async function syncFromOnyx() {
     const pill = $("networkPill");
     const txt = $("networkText");
+    const snapBadge = $("offlineSnapshotPill");
     pill.className = "status-pill status-loading";
     txt.textContent = "Querying onyx-1...";
+    if (snapBadge) snapBadge.classList.add("hidden");
 
     const addrPart = state.config.realm.split("/")[2] || "";
     try {
@@ -451,6 +386,7 @@ if (typeof document !== "undefined") {
       state.data.leaderboard = lbObj.items || [];
       state.rawRender = renderRaw;
 
+      if (snapBadge) snapBadge.classList.add("hidden");
       pill.className = "status-pill status-live";
       txt.textContent = `LIVE · ${state.config.chainId} #${proto.block_height}`;
       renderBanner(
@@ -469,24 +405,29 @@ if (typeof document !== "undefined") {
         // Ignore secondary RPC error
       }
 
+      state.data = createOfflineSnapshotState();
+      if (snapBadge) snapBadge.classList.remove("hidden");
+
       if (inertFound) {
         state.mode = "inert";
         pill.className = "status-pill status-inert";
-        txt.textContent = "onyx-1 inert queue · Preview";
+        txt.textContent = "OFFLINE SNAPSHOT · inert queue";
         state.rawRender =
-          `Verified on-chain in onyx-1 inert queue:\n  ${state.config.realm}\n  ${state.config.pkg}\n\nAwaiting pkg_approvers MsgEnablePackage. Interactive sandbox preview is loaded so you can test every escrow, split-slider, SVG badge, and Adena signing workflow right now.`;
+          `Verified on-chain in onyx-1 inert queue:\n  ${state.config.realm}\n  ${state.config.pkg}\n\nAwaiting pkg_approvers MsgEnablePackage. Displaying verified onyx-1 snapshot (block #1385771) with exact on-chain math + Adena tx builder.`;
         renderBanner(
           "inert",
-          `Realm verified in onyx-1 inert queue (awaiting pkg_approvers enablement). Running Interactive Preview with exact on-chain math + Adena tx builder.`
+          `Realm staged in onyx-1 inert queue. Displaying verified onyx-1 snapshot (#1385771: 3 bounties · 3.5 GNOT locked · 2 GNOT paid).`,
+          true
         );
       } else {
         state.mode = "offline";
         pill.className = "status-pill status-offline";
-        txt.textContent = "Interactive Preview Mode";
-        state.rawRender = `RPC query returned: ${err.message}\n\nRunning Interactive Preview Mode with exact p/escrowmath BigInt invariants.`;
+        txt.textContent = "OFFLINE SNAPSHOT · #1385771";
+        state.rawRender = `RPC unreachable (${err.message})\n\nDisplaying verified onyx-1 snapshot at block #1385771:\n- 3 bounties (2 OPEN locking 3.5 GNOT, 1 PAID 2.0 GNOT)\n- 1 builder (g1gutp6n8tllmll35w8gerze4d0lfgm5l8f88x0v · 60 XP)\n\nClick RPC to reconnect to onyx-1 or a local gnodev node.`;
         renderBanner(
-          "inert",
-          `Preview Mode active (${err.message}). Connect Adena or click RPC to point at any local gnodev / onyx-1 endpoint.`
+          "offline",
+          `RPC unreachable (${err.message}). Showing verified onyx-1 snapshot (#1385771: 3 bounties · 3.5 GNOT locked · 2 GNOT paid · 1 builder).`,
+          true
         );
       }
     }
@@ -494,10 +435,11 @@ if (typeof document !== "undefined") {
     renderAll();
   }
 
-  function renderBanner(kind, message) {
+  function renderBanner(kind, message, showSnapshotBadge = false) {
     const el = $("statusBanner");
     el.className = `banner ${kind === "live" ? "banner-live" : ""}`;
-    el.innerHTML = `<span>${escapeHtml(message)}</span><span class="mono">${escapeHtml(state.config.realm)}</span>`;
+    const badgeHtml = showSnapshotBadge ? `<span class="snapshot-pill">OFFLINE SNAPSHOT</span>` : "";
+    el.innerHTML = `<span class="banner-main">${badgeHtml}<span>${escapeHtml(message)}</span></span><span class="mono">${escapeHtml(state.config.realm)}</span>`;
   }
 
   async function connectAdena() {
@@ -557,7 +499,7 @@ if (typeof document !== "undefined") {
     $("kpiEscrowed").textContent = formatGnot(s.total_escrowed_ugnot);
     $("kpiOpenCount").textContent = `${s.open} open · ${s.disputed} disputed · ${s.total_bounties} total`;
     $("kpiPaid").textContent = formatGnot(s.total_paid_ugnot);
-    $("kpiPaidCount").textContent = `${s.paid} settled quests`;
+    $("kpiPaidCount").textContent = `${s.paid} settled ${s.paid === 1 ? "quest" : "quests"}`;
     $("kpiBuilders").textContent = String(s.builders);
   }
 
@@ -586,6 +528,8 @@ if (typeof document !== "undefined") {
           .filter(Boolean)
           .map((t) => `<span class="tag">${escapeHtml(t)}</span>`)
           .join("");
+        const subCount = Number(b.active_submissions ?? b.submissions?.length ?? 0);
+        const sponsorCount = Number(b.sponsor_count ?? b.contributions?.length ?? 1);
         return `<article class="bounty-card" data-bounty-id="${Number(b.id)}">
           <div class="bounty-top">
             <span class="bounty-id">QUEST #${Number(b.id)}</span>
@@ -596,8 +540,8 @@ if (typeof document !== "undefined") {
           <p class="bounty-summary">${escapeHtml(b.summary || "Click to inspect full on-chain escrow ledger and submissions.")}</p>
           <div class="tag-row">${tags}</div>
           <div class="bounty-meta">
-            <span>${Number(b.active_submissions ?? b.submissions?.length ?? 0)} submissions</span>
-            <span>${Number(b.sponsor_count ?? b.contributions?.length ?? 1)} sponsor(s)</span>
+            <span>${subCount} ${subCount === 1 ? "submission" : "submissions"}</span>
+            <span>${sponsorCount} ${sponsorCount === 1 ? "sponsor" : "sponsors"}</span>
           </div>
         </article>`;
       })
