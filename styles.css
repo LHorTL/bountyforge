@@ -144,6 +144,23 @@ a:hover {
   border: 1px solid var(--accent-border);
 }
 
+.snapshot-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+  border: 1px solid var(--warn-border);
+  white-space: nowrap;
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;
@@ -180,12 +197,24 @@ a:hover {
   background: var(--ok-ink);
 }
 
+.status-pill.status-inert {
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+  color: var(--warn-ink);
+}
+
 .status-pill.status-inert .dot {
   background: var(--warn-ink);
 }
 
+.status-pill.status-offline {
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+  color: var(--warn-ink);
+}
+
 .status-pill.status-offline .dot {
-  background: var(--err-ink);
+  background: var(--warn-ink);
 }
 
 /* Status Banner */
@@ -202,6 +231,13 @@ a:hover {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+}
+
+.banner-main {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
 }
 
